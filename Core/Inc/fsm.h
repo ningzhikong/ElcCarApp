@@ -48,6 +48,6 @@ void FSM_KeyScan(void);
 void FSM_Timer1s_Tick(void);     // 1s 中断：处理视觉蜂鸣器/LED闪烁
 void FSM_ControlLoop_10ms(void); // 10ms 中断：核心控制闭环
 void FSM_OLED_Update(void);      // 主循环调用：非阻塞刷新显存
-void FSM_UART_RxCallback(uint8_t *data, uint16_t len);
+void FSM_VisionRxByte(uint8_t byte);
 
 #endif /* __CAR_FSM_H__ */

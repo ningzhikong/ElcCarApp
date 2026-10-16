@@ -2,13 +2,13 @@
 
 /* 写单个寄存器 */
 static uint8_t write_reg(I2C_HandleTypeDef *h, uint8_t reg, uint8_t val) {
-    return HAL_I2C_Mem_Write(h, MPU6050_ADDR, reg, 1, &val, 1, 500);
+    return HAL_I2C_Mem_Write(h, MPU6050_ADDR, reg, 1, &val, 1, 5);
 }
 
 /* 唤醒并配置量程。返回 0 成功, 非 0 失败(见错误码) */
 uint8_t MPU6050_Init(I2C_HandleTypeDef *hi2c) {
     uint8_t id = 0;
-    if (HAL_I2C_Mem_Read(hi2c, MPU6050_ADDR, MPU6050_WHO_AM_I, 1, &id, 1, 500) != HAL_OK)
+    if (HAL_I2C_Mem_Read(hi2c, MPU6050_ADDR, MPU6050_WHO_AM_I, 1, &id, 1, 5) != HAL_OK)
         return 1;                       /* 总线无应答 */
     if (id != 0x68)
         return 2;                       /* 地址/接线不对 */
@@ -24,7 +24,7 @@ uint8_t MPU6050_Init(I2C_HandleTypeDef *hi2c) {
 /* 连续读 14 字节(加速度+温度+陀螺), 转成物理量 */
 uint8_t MPU6050_Read(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *d) {
     uint8_t buf[14];
-    if (HAL_I2C_Mem_Read(hi2c, MPU6050_ADDR, MPU6050_ACCEL_XOUT_H, 1, buf, 14, 500) != HAL_OK)
+    if (HAL_I2C_Mem_Read(hi2c, MPU6050_ADDR, MPU6050_ACCEL_XOUT_H, 1, buf, 14, 5) != HAL_OK)
         return 1;
     int16_t raw[7];
     for (int i = 0; i < 7; i++)

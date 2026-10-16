@@ -4,6 +4,7 @@
 #include "usart.h"
 #include "oled.h"
 #include "control.h"
+#include "serial_router.h"
 #include "i2c.h"
 #include "mpu6050.h"
 #include <stdio.h>
@@ -31,6 +32,7 @@ static uint32_t beep_led_off_tick = 0; // 独立蜂鸣器/LED关闭倒计时
  volatile int16_t speed_L = 0;
  volatile int16_t speed_R = 0;
 static int32_t total_encoder_ticks = 0;
+static int64_t total_encoder_twice = 0;
 static int32_t last_lap_encoder_tick = 0;
 static int32_t peak_maintain_pulse = 0;
 
@@ -53,7 +55,6 @@ static float mpu_bias[3] = {0.0f, 0.0f, 0.0f}; // gx, gy, gz 零偏
 static bool mpu_ready = false;
 
 /* 串口接收与握手缓冲区 */
-static uint8_t uart_rx_byte;
 static char uart_rx_buf[16];
 static volatile uint8_t uart_rx_idx = 0;
 
@@ -87,7 +88,7 @@ static void GraySensor_Scan(void) {
         Mux_Select(i);
         for (volatile int d = 0; d < 30; d++); // 延时稳定模拟开关
         HAL_ADC_Start(&hadc1);
-        if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
+        if (HAL_ADC_PollForConversion(&hadc1, 1) == HAL_OK) {
             gray_adc[i] = HAL_ADC_GetValue(&hadc1);
         }
         HAL_ADC_Stop(&hadc1);
@@ -122,17 +123,17 @@ static void Enter_Standby_State(void) {
     g_system_state = SYS_STATE_STANDBY;
 
     // 参数清零
-    Motor_SetPWM(0, 0);
+    Control_Stop();
     Device_Beep_Led_Set(false);
-    HAL_UART_AbortReceive(&huart1);
+    Serial_StopVision();
 
     // 彻底清空电机闭环 PID 状态
-    pid_L.output = 0; pid_L.err = 0; pid_L.err_last = 0; pid_L.err_prev = 0;
-    pid_R.output = 0; pid_R.err = 0; pid_R.err_last = 0; pid_R.err_prev = 0;
+    Control_Stop();
 
     g_current_laps = 0;
     g_beep_event_count = 0;
     total_encoder_ticks = 0;
+    total_encoder_twice = 0;
     last_lap_encoder_tick = 0;
     peak_maintain_pulse = 0;
     peak_lockout_tick = 0;
@@ -168,13 +169,14 @@ void Car_System_Init(void) {
 /* --- 按键状态机跳转逻辑 --- */
 
 void FSM_KeyScan(void) {
-    static GPIO_PinState last_key = GPIO_PIN_SET;
-    GPIO_PinState cur_key = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_15);
-
-    // MODECHANGE (PB15) 下降沿
-    if (last_key == GPIO_PIN_SET && cur_key == GPIO_PIN_RESET) {
-        HAL_Delay(20); // 消抖
-        if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_15) == GPIO_PIN_RESET) {
+    static GPIO_PinState last_raw = GPIO_PIN_SET, stable = GPIO_PIN_SET;
+    static uint32_t changed_at;
+    uint32_t now = HAL_GetTick();
+    GPIO_PinState raw = HAL_GPIO_ReadPin(ModeChange_GPIO_Port, ModeChange_Pin);
+    if (raw != last_raw) { last_raw = raw; changed_at = now; }
+    if (raw == stable || now - changed_at < 20u) return;
+    stable = raw;
+    if (stable != GPIO_PIN_RESET) return;
             switch (g_system_state) {
                 case SYS_STATE_STANDBY: {
                     g_system_state = SYS_STATE_VISION;
@@ -186,11 +188,12 @@ void FSM_KeyScan(void) {
                     uart_rx_idx = 0;
                     uint8_t req_data[] = "START\r\n";
                     HAL_UART_Transmit(&huart1, req_data, strlen((char*)req_data), 100);
-                    HAL_UART_Receive_IT(&huart1, &uart_rx_byte, 1);
+                    Serial_StartVision();
                     break;
                 }
 
                 case SYS_STATE_VISION:
+                    Serial_StopVision();
                     // 兜底发车参数
                     if (g_vision_color == COLOR_UNKNOWN) {
                         g_vision_color = COLOR_RED; // 默认红色 ABCD
@@ -205,13 +208,13 @@ void FSM_KeyScan(void) {
                     }
 
                     // 关键：进入 RUN 状态前清零 PID 累积状态，防止左右不对称
-                    pid_L.output = 0; pid_L.err = 0; pid_L.err_last = 0; pid_L.err_prev = 0;
-                    pid_R.output = 0; pid_R.err = 0; pid_R.err_last = 0; pid_R.err_prev = 0;
+                    Control_Stop();
 
                     Device_Beep_Led_Set(false);
                     blink_total_count     = 0;
                     blink_cur_count       = 0;
                     total_encoder_ticks   = 0;
+                    total_encoder_twice = 0;
                     last_lap_encoder_tick = 0;
                     g_beep_event_count    = 0;
                     g_current_laps        = 0;
@@ -227,17 +230,15 @@ void FSM_KeyScan(void) {
                 case SYS_STATE_BRAKE:
                     break;
             }
-        }
-    }
-    last_key = cur_key;
 }
+
 
 /* --- 串口接收 --- */
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-    if (huart->Instance == USART1 && g_system_state == SYS_STATE_VISION) {
+void FSM_VisionRxByte(uint8_t byte) {
+    if (g_system_state == SYS_STATE_VISION) {
         if (uart_rx_idx < sizeof(uart_rx_buf) - 1) {
-            uart_rx_buf[uart_rx_idx++] = uart_rx_byte;
+            uart_rx_buf[uart_rx_idx++] = byte;
         }
 
         if (uart_rx_idx >= 2) {
@@ -261,11 +262,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
             }
         }
 
-        if (uart_rx_idx >= sizeof(uart_rx_buf) - 1 || uart_rx_byte == '\n') {
+        if (uart_rx_idx >= sizeof(uart_rx_buf) - 1 || byte == '\n') {
             uart_rx_idx = 0;
         }
 
-        HAL_UART_Receive_IT(&huart1, &uart_rx_byte, 1);
     }
 }
 
@@ -291,15 +291,29 @@ void FSM_ControlLoop_10ms(void) {
     uint32_t now = HAL_GetTick();
 
     // 1. 每 10ms 读取左右轮真实编码器速度脉冲
-    Encoder_ReadSpeeds(&speed_L, &speed_R);
-    total_encoder_ticks += (speed_L + speed_R) / 2;
+    static uint32_t previous_l, previous_r;
+    static uint32_t yaw_tick;
+    ControlView view;
+    int32_t delta_l, delta_r;
+    float yaw_dt;
+    Control_ReadView(&view);
+    speed_L = (int16_t)(view.speed_l + (view.speed_l >= 0 ? 0.5f : -0.5f));
+    speed_R = (int16_t)(view.speed_r + (view.speed_r >= 0 ? 0.5f : -0.5f));
+    delta_l = (int32_t)((uint32_t)view.position_l - previous_l);
+    delta_r = (int32_t)((uint32_t)view.position_r - previous_r);
+    previous_l = (uint32_t)view.position_l;
+    previous_r = (uint32_t)view.position_r;
+    total_encoder_twice += (int64_t)delta_l + delta_r;
+    total_encoder_ticks = (int32_t)(total_encoder_twice / 2);
+    yaw_dt = yaw_tick ? (float)(now - yaw_tick) * 0.001f : 0.0f;
+    yaw_tick = now;
     
 
     // 1.5 MPU6050 航向积分（竖放 yaw=GYRO_Y；待机不累计，避免长期漂移）
     if (mpu_ready && g_system_state != SYS_STATE_STANDBY) {
         MPU6050_Data_t mpu;
         if (MPU6050_Read(&hi2c2, &mpu) == 0) {
-            current_yaw += MPU_YAW_SIGN * (mpu.gy - mpu_bias[1]) * 0.01f; // dt=10ms
+            current_yaw += MPU_YAW_SIGN * (mpu.gy - mpu_bias[1]) * yaw_dt; // dt=10ms
         }
     }
 
@@ -311,16 +325,12 @@ void FSM_ControlLoop_10ms(void) {
 
     switch (g_system_state) {
         case SYS_STATE_STANDBY:
-            pid_L.output = 0;
-            pid_R.output = 0;
-            Motor_SetPWM(0, 0);
+            Control_Stop();
             Device_Beep_Led_Set(false);
             break;
 
         case SYS_STATE_VISION:
-            pid_L.output = 0;
-            pid_R.output = 0;
-            Motor_SetPWM(0, 0);
+            Control_Stop();
 
             if (now - vision_start_time > 10000 && blink_total_count == 0) {
                 Enter_Standby_State();
@@ -470,7 +480,7 @@ void FSM_ControlLoop_10ms(void) {
             if (abs(speed_L) > 4 || abs(speed_R) > 4) {
                 ClosedLoop_Drive(0.0f, 0.0f, speed_L, speed_R);
             } else {
-                Motor_SetPWM(0, 0);
+                Control_Stop();
                 Enter_Standby_State();
             }
             break;
@@ -495,7 +505,6 @@ void FSM_OLED_Update(void) {
             break;
 
         case SYS_STATE_RUN_ABCD:
-            GraySensor_Scan();
             // 调试：显示灰度值和左右轮速度
             snprintf(disp_buf, sizeof(disp_buf), "g:%d %d %d %d", gray_adc[0], gray_adc[1], gray_adc[2], gray_adc[3]);
             OLED_PrintString(10, 0, disp_buf, &font16x16, OLED_COLOR_NORMAL);

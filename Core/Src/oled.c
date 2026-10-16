@@ -47,7 +47,7 @@ uint8_t OLED_GRAM[OLED_PAGE][OLED_COLUMN];
  * @note 此函数是移植本驱动时的重要函数 将本驱动库移植到其他平台时应根据实际情况修改此函数
  */
 void OLED_Send(uint8_t *data, uint8_t len) {
-  HAL_I2C_Master_Transmit(&hi2c1, OLED_ADDRESS, data, len, HAL_MAX_DELAY);
+  HAL_I2C_Master_Transmit(&hi2c1, OLED_ADDRESS, data, len, 3u);
 }
 
 /**
@@ -156,16 +156,35 @@ void OLED_NewFrame(void) {
  * @brief 将当前显存显示到屏幕上
  * @note 此函数是移植本驱动时的重要函数 将本驱动库移植到其他驱动芯片时应根据实际情况修改此函数
  */
+static uint8_t transfer_frame[8][128];
+static uint8_t transfer_busy, transfer_page, transfer_column;
+
 void OLED_ShowFrame(void) {
-  static uint8_t sendBuffer[OLED_COLUMN + 1];
-  sendBuffer[0] = 0x40;
-  for (uint8_t i = 0; i < OLED_PAGE; i++) {
-    OLED_SendCmd(0xB0 + i); // 设置页地址
-    OLED_SendCmd(0x02);     // 设置列地址低4位
-    OLED_SendCmd(0x10);     // 设置列地址高4位
-    memcpy(sendBuffer + 1, OLED_GRAM[i], OLED_COLUMN);
-    OLED_Send(sendBuffer, OLED_COLUMN + 1);
-  }
+    if (transfer_busy) return;
+    memcpy(transfer_frame, OLED_GRAM, sizeof transfer_frame);
+    transfer_page = transfer_column = 0u;
+    transfer_busy = 1u;
+}
+
+void OLED_Poll(void) {
+    uint8_t packet[17];
+    if (!transfer_busy) return;
+    if (transfer_column == 0u) {
+        OLED_SendCmd((uint8_t)(0xB0u + transfer_page));
+        OLED_SendCmd(0x02u);
+        OLED_SendCmd(0x10u);
+    }
+    packet[0] = 0x40u;
+    memcpy(packet + 1, transfer_frame[transfer_page] + transfer_column, 16u);
+    if (HAL_I2C_Master_Transmit(&hi2c1, OLED_ADDRESS, packet, sizeof packet, 3u) != HAL_OK) {
+        transfer_busy = 0u;
+        return;
+    }
+    transfer_column += 16u;
+    if (transfer_column == 128u) {
+        transfer_column = 0u;
+        if (++transfer_page == 8u) transfer_busy = 0u;
+    }
 }
 
 /**

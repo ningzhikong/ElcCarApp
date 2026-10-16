@@ -30,6 +30,8 @@
 #include "oled.h"
 #include "string.h"
 #include "control.h"
+#include "autotune.h"
+#include "serial_router.h"
 #include <stdio.h>
 /* USER CODE END Includes */
 
@@ -102,44 +104,43 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
-OLED_Init();
-  Car_System_Init();
-
-  uint32_t tick_10ms = 0;
-  uint32_t tick_100ms = 0;
-  uint32_t tick_1s = 0;
+  Autotune_SelectBootMode();
+  if (HAL_ADCEx_Calibration_Start(&hadc1) != HAL_OK) Error_Handler();
+  if (Autotune_IsEnabled()) Motor_Init();
+  else {
+    OLED_Init();
+    Car_System_Init();
+  }
+  Control_StartTimer();
+  if (Autotune_IsEnabled()) Autotune_Init();
+  uint32_t tick_10ms = HAL_GetTick();
+  uint32_t tick_100ms = tick_10ms;
+  uint32_t tick_1s = tick_10ms;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      uint32_t now = HAL_GetTick();
-
-    // 1. ɨ�谴���¼� (ֻ�д��������Ӿ���ѭ��ǿ����ɲ��)
-    FSM_KeyScan();
-
-    // 2. 10ms �����ȼ����Ʊջ�
-    if (now - tick_10ms >= 10) {
+    uint32_t now = HAL_GetTick();
+    Serial_Poll();
+    if (Autotune_IsEnabled()) {
+      Autotune_Poll();
+    } else {
+      FSM_KeyScan();
+      if (now - tick_10ms >= CONTROL_PERIOD_MS) {
         tick_10ms = now;
-        FSM_ControlLoop_10ms();
-    }
-
-    // 3. 100ms ˢ�� OLED ��ʾ��
-    // 3. 100ms 刷新 OLED
-    if (now - tick_100ms >= 100) {
+        FSM_ControlLoop_10ms(); /* Foreground sensors/route; PWM runs on TIM1. */
+      }
+      if (now - tick_100ms >= 200u) {
         tick_100ms = now;
-
         FSM_OLED_Update();
-
-        // 调试：每帧都刷新OLED，确保能显示
-        FSM_OLED_Update();
-    }
-
-    // 4. 1s �����ж��߼� (�Ӿ�ʶ��������� LED ��� 1s ��˸)
-    if (now - tick_1s >= 1000) {
+      }
+      if (now - tick_1s >= 1000u) {
         tick_1s = now;
         FSM_Timer1s_Tick();
+      }
+      OLED_Poll(); /* At most one bounded 16-byte transfer per iteration. */
     }
   }
   /* USER CODE END WHILE */
@@ -207,6 +208,7 @@ void Error_Handler(void)
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
+  Motor_EmergencyStop();
   /* 错误指示: LED 快速闪烁 (PA7 低电平导通) */
   while (1) {
     HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_7);

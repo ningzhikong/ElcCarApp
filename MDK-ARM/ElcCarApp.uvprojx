@@ -415,6 +415,21 @@
               <FilePath>..\Core\Src\control.c</FilePath>
             </File>
             <File>
+              <FileName>control_math.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/control_math.c</FilePath>
+            </File>
+            <File>
+              <FileName>autotune.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/autotune.c</FilePath>
+            </File>
+            <File>
+              <FileName>serial_router.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Core/Src/serial_router.c</FilePath>
+            </File>
+            <File>
               <FileName>main.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/main.c</FilePath>
