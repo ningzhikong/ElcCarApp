@@ -6,5 +6,4 @@ MDK-ARM/*.uvguix.*
 MDK-ARM/*.uvoptx
 MDK-ARM/ElcCarApp/
 .review_tmp/
-# Markdown documents stay local.
 *.[mM][dD]
