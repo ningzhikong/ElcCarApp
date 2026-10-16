@@ -777,6 +777,16 @@
               <FileType>5</FileType>
               <FilePath>..\Core\Inc\fsm.h</FilePath>
             </File>
+            <File>
+              <FileName>route_config.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\route_config.h</FilePath>
+            </File>
+            <File>
+              <FileName>motor_tuning.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\motor_tuning.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

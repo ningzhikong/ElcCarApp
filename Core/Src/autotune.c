@@ -43,6 +43,7 @@ static uint8_t enabled;
 static volatile uint8_t armed, pending_run, ack_pending, io_error, start_expired;
 static volatile uint32_t state, fault, count, elapsed, heartbeat_tick;
 static uint32_t start_tick, next_sample, quiet_ticks, stall_l, stall_r, wrong_ticks;
+static uint32_t no_motion_l, no_motion_r;
 static volatile uint32_t arm_tick;
 static RunConfig pending, active;
 static Sample trace[TRACE_CAPACITY];
@@ -132,6 +133,7 @@ void Autotune_BeforeControl(uint32_t now_ms)
         pending_run = 0u;
         count = elapsed = next_sample = 0u;
         stall_l = stall_r = wrong_ticks = 0u;
+        no_motion_l = no_motion_r = 0u;
         fault = 0u;
         start_tick = heartbeat_tick = now_ms;
         Control_ConfigurePI(active.kp_l, active.ki_l, active.kp_r, active.ki_r, active.limit);
@@ -170,11 +172,19 @@ void Autotune_AfterControl(const ControlView *v)
             finish(STATE_FAULT, FAULT_DIRECTION);
             return;
         }
-        if (v->pwm_l >= 80.0f && v->raw_l >= -1 && v->raw_l <= 1) ++stall_l;
+        /* A full-scale cap below 80 must not disable the fast stall guard. */
+        float stall_pwm = active.limit < 80.0f ? active.limit * 0.8f : 80.0f;
+        if (v->target_l > 0.0f && v->pwm_l >= stall_pwm && v->raw_l == 0) ++stall_l;
         else stall_l = 0u;
-        if (v->pwm_r >= 80.0f && v->raw_r >= -1 && v->raw_r <= 1) ++stall_r;
+        if (v->target_r > 0.0f && v->pwm_r >= stall_pwm && v->raw_r == 0) ++stall_r;
         else stall_r = 0u;
+        /* Includes zero gains and insufficient PWM: never finish a silent wheel. */
+        if (v->target_l > 0.0f && v->raw_l <= 0) ++no_motion_l;
+        else no_motion_l = 0u;
+        if (v->target_r > 0.0f && v->raw_r <= 0) ++no_motion_r;
+        else no_motion_r = 0u;
         if (stall_l >= 50u || stall_r >= 50u) finish(STATE_FAULT, FAULT_STALL);
+        if (no_motion_l >= 100u || no_motion_r >= 100u) finish(STATE_FAULT, FAULT_STALL);
     }
     if (state != STATE_RUN && state != STATE_DONE) return;
     if (elapsed < next_sample || (state == STATE_DONE && next_sample > DURATION_MS)) return;

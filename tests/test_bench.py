@@ -106,6 +106,35 @@ class BenchTests(unittest.TestCase):
             board.run(args)
         self.assertFalse(any(command.startswith('ARM') for command in board.sent))
 
+    def test_each_wheel_requires_measured_motion(self):
+        for raw, speed, side in ((1, 5, 'left'), (2, 6, 'right')):
+            rows = [list(row) for row in self.rows]
+            for row in rows:
+                row[raw] = row[speed] = 0
+            with self.assertRaisesRegex(ValueError, f'motion on {side}'):
+                bench.evaluate(rows, 5., 100.)
+
+    def test_low_pwm_cap_cannot_hide_a_dead_encoder(self):
+        rows = [list(row) for row in self.rows]
+        for row in rows:
+            row[1] = row[2] = row[5] = row[6] = 0
+            row[7] = row[8] = 50 if row[3] else 0
+            row[10] = 3 if row[3] else 0
+        with self.assertRaisesRegex(ValueError, 'motion'):
+            bench.evaluate(rows, 5., 50.)
+
+    def test_decimated_raw_pulses_can_alias_without_a_dead_motor(self):
+        rows, filtered = [], 0.
+        for t in range(0, 5501, 10):
+            target = bench.target_at(t, 1.)
+            raw = int(target > 0 and (t // 10) % 5 in (1, 3))
+            filtered += .125 * (raw - filtered)
+            if t % 50 == 0:
+                pwm = 50 if target else 0
+                rows.append((t, raw, raw, target, target, filtered, filtered, pwm, pwm, 10000, 0))
+        self.assertTrue(all(row[1] == 0 for row in rows))
+        self.assertTrue(bench.evaluate(rows, 1., 100.)['valid'])
+
 
 if __name__ == '__main__':
     unittest.main()

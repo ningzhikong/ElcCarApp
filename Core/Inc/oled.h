@@ -2,7 +2,11 @@
 #define __OLED_H__
 
 #include "font.h"
+#ifdef CAR_HOST_TEST
+#include "host_hal.h"
+#else
 #include "main.h"
+#endif
 #include "string.h"
 
 typedef enum {

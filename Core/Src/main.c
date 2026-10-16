@@ -140,7 +140,7 @@ int main(void)
         tick_1s = now;
         FSM_Timer1s_Tick();
       }
-      OLED_Poll(); /* At most one bounded 16-byte transfer per iteration. */
+      OLED_Poll(); /* One page command or 16-byte data chunk per iteration. */
     }
   }
   /* USER CODE END WHILE */

@@ -40,20 +40,34 @@ uint8_t MPU6050_Read(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *d) {
 }
 
 /* 静止时采样求零偏, 消除陀螺零点漂移 */
-void MPU6050_CalibrateBias(I2C_HandleTypeDef *hi2c,
+uint8_t MPU6050_CalibrateBias(I2C_HandleTypeDef *hi2c,
                            float *bgx, float *bgy, float *bgz, uint16_t n) {
     float sx = 0, sy = 0, sz = 0;
     MPU6050_Data_t d;
     uint16_t ok = 0;
+    float low[3] = {500.0f, 500.0f, 500.0f};
+    float high[3] = {-500.0f, -500.0f, -500.0f};
+    uint8_t moving = 0u;
+    if (n < 20u) return 1u;
     for (uint16_t i = 0; i < n; i++) {
         if (MPU6050_Read(hi2c, &d) == 0) {
+            float rates[3] = {d.gx, d.gy, d.gz};
+            float gravity = d.ax * d.ax + d.ay * d.ay + d.az * d.az;
+            if (!(gravity >= 0.64f && gravity <= 1.44f)) moving = 1u;
+            for (unsigned axis = 0; axis < 3u; ++axis) {
+                if (!(rates[axis] >= -10.0f && rates[axis] <= 10.0f)) moving = 1u;
+                if (rates[axis] < low[axis]) low[axis] = rates[axis];
+                if (rates[axis] > high[axis]) high[axis] = rates[axis];
+            }
             sx += d.gx; sy += d.gy; sz += d.gz; ok++;
         }
         HAL_Delay(5);
     }
-    if (ok > 0) {
-        *bgx = sx / ok;
-        *bgy = sy / ok;
-        *bgz = sz / ok;
-    }
+    if ((uint32_t)ok * 10u < (uint32_t)n * 9u || moving) return 1u;
+    for (unsigned axis = 0; axis < 3u; ++axis)
+        if (high[axis] - low[axis] > 2.0f) return 1u;
+    *bgx = sx / ok;
+    *bgy = sy / ok;
+    *bgz = sz / ok;
+    return 0u;
 }

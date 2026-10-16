@@ -10,6 +10,8 @@ import time
 HELLO = 'HELLO ELC_AUTOTUNE_V1 INC_PI_COUNTS_10MS 10 50 5500'
 FIELDS = ('time_ms', 'raw_l', 'raw_r', 'target_l', 'target_r', 'speed_l', 'speed_r',
           'pwm_l', 'pwm_r', 'period_us', 'flags')
+CONTROLLER = {'id': 'ELC_INC_PI_V1', 'period_ms': 10, 'filter_alpha': .125,
+              'kd': 0, 'delta_limit': 30, 'forward_only': True, 'zero_target_cancel': True}
 
 
 def validate_parameters(args):
@@ -60,6 +62,15 @@ def validate_trace(rows, peak, limit):
             raise ValueError('Drive was not cancelled in a zero-target segment')
     if rows[0][0] != 0 or not 5500 <= rows[-1][0] <= 5515:
         raise ValueError('Missing experiment boundaries')
+    for side, speed_index in (('left', 5), ('right', 6)):
+        # Require excitation of each wheel in the full-speed plateau. This is
+        # independent of PWM cap and prevents dead encoders from being scored.
+        plateau = [r for r in rows if 1800 <= r[0] < 3000]
+        # raw_l/r are one 10ms delta sampled every 50ms: sparse pulses may
+        # alias to zero. The IIR consumes every tick and survives decimation.
+        mean_speed = sum(r[speed_index] for r in plateau) / len(plateau)
+        if mean_speed < max(.25, .1 * peak):
+            raise ValueError(f'Insufficient measured motion on {side} wheel')
 
 
 def evaluate(rows, peak, limit):

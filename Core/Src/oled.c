@@ -22,7 +22,11 @@
  *
  */
 #include "oled.h"
+#ifndef CAR_HOST_TEST
 #include "i2c.h"
+#else
+#include "host_services.h"
+#endif
 #include <math.h>
 #include <stdlib.h>
 
@@ -46,17 +50,18 @@ uint8_t OLED_GRAM[OLED_PAGE][OLED_COLUMN];
  * @return None
  * @note 此函数是移植本驱动时的重要函数 将本驱动库移植到其他平台时应根据实际情况修改此函数
  */
-void OLED_Send(uint8_t *data, uint8_t len) {
-  HAL_I2C_Master_Transmit(&hi2c1, OLED_ADDRESS, data, len, 3u);
+static int OLED_Send(uint8_t *data, uint8_t len) {
+  /* HAL's BUSY wait has its own 25ms timeout; avoid entering it at all. */
+  if (__HAL_I2C_GET_FLAG(&hi2c1, I2C_FLAG_BUSY)) return 0;
+  return HAL_I2C_Master_Transmit(&hi2c1, OLED_ADDRESS, data, len, 3u) == HAL_OK;
 }
 
 /**
  * @brief 向OLED发送指令
  */
-void OLED_SendCmd(uint8_t cmd) {
-  static uint8_t sendBuffer[2] = {0};
-  sendBuffer[1] = cmd;
-  OLED_Send(sendBuffer, 2);
+static int OLED_SendCmd(uint8_t cmd) {
+  uint8_t sendBuffer[2] = {0, cmd};
+  return OLED_Send(sendBuffer, 2);
 }
 
 // ========================== OLED驱动函数 ==========================
@@ -157,32 +162,44 @@ void OLED_NewFrame(void) {
  * @note 此函数是移植本驱动时的重要函数 将本驱动库移植到其他驱动芯片时应根据实际情况修改此函数
  */
 static uint8_t transfer_frame[8][128];
-static uint8_t transfer_busy, transfer_page, transfer_column;
+static uint8_t transfer_busy, transfer_page, transfer_column, transfer_stage, retry_pending;
+static uint32_t retry_tick;
 
 void OLED_ShowFrame(void) {
     if (transfer_busy) return;
     memcpy(transfer_frame, OLED_GRAM, sizeof transfer_frame);
-    transfer_page = transfer_column = 0u;
+    transfer_page = transfer_column = transfer_stage = 0u;
     transfer_busy = 1u;
 }
 
 void OLED_Poll(void) {
     uint8_t packet[17];
+    int success;
+    uint32_t now = HAL_GetTick();
     if (!transfer_busy) return;
-    if (transfer_column == 0u) {
-        OLED_SendCmd((uint8_t)(0xB0u + transfer_page));
-        OLED_SendCmd(0x02u);
-        OLED_SendCmd(0x10u);
+    if (retry_pending && now - retry_tick < 50u) return;
+    retry_pending = 0u;
+    /* Exactly one transaction per Poll, including the page setup commands. */
+    if (transfer_stage < 3u) {
+        uint8_t command = transfer_stage == 0u ? (uint8_t)(0xB0u + transfer_page) :
+                          transfer_stage == 1u ? 0x02u : 0x10u;
+        success = OLED_SendCmd(command);
+    } else {
+        packet[0] = 0x40u;
+        memcpy(packet + 1, transfer_frame[transfer_page] + transfer_column, 16u);
+        success = OLED_Send(packet, sizeof packet);
     }
-    packet[0] = 0x40u;
-    memcpy(packet + 1, transfer_frame[transfer_page] + transfer_column, 16u);
-    if (HAL_I2C_Master_Transmit(&hi2c1, OLED_ADDRESS, packet, sizeof packet, 3u) != HAL_OK) {
+    if (!success) {
         transfer_busy = 0u;
+        retry_pending = 1u;
+        retry_tick = HAL_GetTick();
         return;
     }
+    if (transfer_stage < 3u) { ++transfer_stage; return; }
     transfer_column += 16u;
     if (transfer_column == 128u) {
         transfer_column = 0u;
+        transfer_stage = 0u;
         if (++transfer_page == 8u) transfer_busy = 0u;
     }
 }

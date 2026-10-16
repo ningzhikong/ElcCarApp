@@ -10,6 +10,8 @@ int huart1;
 static uint32_t now, mask, control_fault;
 static ControlView measured;
 static int stop_key, configured;
+static unsigned pwm_cap = 100u;
+static float pwm_fraction = 1.0f;
 static char output[32000];
 static unsigned output_length;
 
@@ -45,15 +47,15 @@ void Control_ReadView(ControlView *view) { *view = measured; }
 void Control_SetEncoderSigns(int l, int r) { assert(abs(l) == 1 && abs(r) == 1); }
 void Control_ConfigurePI(float pl, float il, float pr, float ir, float limit)
 {
-    assert(pl == 2.0f && il == 0.3f && pr == 2.0f && ir == 0.3f && limit == 100.0f);
+    assert(pl == 2.0f && il == 0.3f && pr == 2.0f && ir == 0.3f && limit == (float)pwm_cap);
     ++configured;
     Control_Stop();
 }
 void Control_SetTargets(float l, float r)
 {
     measured.target_l = l; measured.target_r = r;
-    measured.pwm_l = l > 0.0f ? 100.0f : 0.0f;
-    measured.pwm_r = r > 0.0f ? 100.0f : 0.0f;
+    measured.pwm_l = l > 0.0f ? pwm_cap * pwm_fraction : 0.0f;
+    measured.pwm_r = r > 0.0f ? pwm_cap * pwm_fraction : 0.0f;
 }
 
 static void clear_output(void) { output_length = 0u; output[0] = 0; }
@@ -86,13 +88,16 @@ static void arm(void)
 }
 static void start(void)
 {
+    char command[128], ack[160];
     arm(); clear_output();
-    feed("RUN 7 2 .3 2 .3 5 100\n");
+    snprintf(command, sizeof command, "RUN 7 2 .3 2 .3 5 %u\n", pwm_cap);
+    feed(command);
     assert(!strstr(output, "ACK"));
     assert(configured == 0);
     tick(0); Autotune_Poll();
     assert(configured == 1);
-    assert(strstr(output, "ACK 7 2.000000 0.300000 2.000000 0.300000 5.0000 100\n"));
+    snprintf(ack, sizeof ack, "ACK 7 2.000000 0.300000 2.000000 0.300000 5.0000 %u\n", pwm_cap);
+    assert(strstr(output, ack));
 }
 
 static void test_math(void)
@@ -187,6 +192,23 @@ int main(int argc, char **argv)
         for (unsigned i = 0; i < 3u; ++i) tick(-3);
         exchange("STATUS\n", "STATUS 7 4 13");
         assert(measured.pwm_l == 0.0f);
+    } else if (!strncmp(argv[1], "low_stall", 9) || !strcmp(argv[1], "no_motion")) {
+        pwm_cap = !strcmp(argv[1], "no_motion") ? 50u : (unsigned)atoi(argv[1] + 9);
+        if (!strcmp(argv[1], "no_motion")) pwm_fraction = 0.0f;
+        start();
+        for (unsigned i = 0; i < 160u; ++i) {
+            if (i % 10u == 0u) feed("PING\n");
+            tick(0);
+        }
+        exchange("STATUS\n", "STATUS 7 4 12");
+        assert(measured.pwm_l == 0.0f);
+    } else if (!strcmp(argv[1], "sparse_motion")) {
+        pwm_cap = 20u; start();
+        for (unsigned i = 0; i < 550u; ++i) {
+            if (i % 10u == 0u) feed("PING\n");
+            tick(i % 4u == 0u ? 1 : 0);
+        }
+        exchange("STATUS\n", "STATUS 7 2 0 111 5500 0");
     } else if (!strcmp(argv[1], "stall")) {
         start();
         for (unsigned i = 0; i < 110u; ++i) {

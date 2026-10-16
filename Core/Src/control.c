@@ -60,6 +60,20 @@ void Speed_PID_Init(void)
     pid_L.ki = pid_R.ki = 0.3f;
     pid_L.kd = pid_R.kd = 0.05f;
     pid_L.max_output = pid_R.max_output = 400.0f;
+#if CAR_TUNED_PI_ENABLED
+    /* Match the bench controller and actuator envelope, including Kd=0. */
+    if (!(CAR_TUNED_KP_LEFT >= 0.0f && CAR_TUNED_KP_LEFT <= 10.0f &&
+          CAR_TUNED_KP_RIGHT >= 0.0f && CAR_TUNED_KP_RIGHT <= 10.0f &&
+          CAR_TUNED_KI_LEFT >= 0.0f && CAR_TUNED_KI_LEFT <= 2.0f &&
+          CAR_TUNED_KI_RIGHT >= 0.0f && CAR_TUNED_KI_RIGHT <= 2.0f &&
+          CAR_TUNED_PWM_LIMIT >= 20 && CAR_TUNED_PWM_LIMIT <= 200 &&
+          (float)(unsigned)CAR_TUNED_PWM_LIMIT == (float)CAR_TUNED_PWM_LIMIT &&
+          CAR_TUNED_PEAK >= 1.0f && CAR_TUNED_PEAK <= 25.0f)) Error_Handler();
+    pid_L.kp = CAR_TUNED_KP_LEFT; pid_L.ki = CAR_TUNED_KI_LEFT;
+    pid_R.kp = CAR_TUNED_KP_RIGHT; pid_R.ki = CAR_TUNED_KI_RIGHT;
+    pid_L.kd = pid_R.kd = 0.0f;
+    pid_L.max_output = pid_R.max_output = CAR_TUNED_PWM_LIMIT;
+#endif
     pid_turn.kp = 8.0f;
     pid_turn.kd = 2.0f;
     pid_turn.max_output = 5.0f;
@@ -156,6 +170,14 @@ void Control_ConfigurePI(float kp_l, float ki_l, float kp_r, float ki_r, float l
 void Control_SetTargets(float left, float right)
 {
     uint32_t saved = lock();
+#if CAR_TUNED_PI_ENABLED
+    if (!Autotune_IsEnabled() && !(left >= 0.0f && left <= CAR_TUNED_PEAK &&
+                                   right >= 0.0f && right <= CAR_TUNED_PEAK)) {
+        Control_LatchFault(CONTROL_FAULT_EMERGENCY);
+        __set_PRIMASK(saved);
+        return;
+    }
+#endif
     if (!(left >= -100.0f && left <= 100.0f && right >= -100.0f && right <= 100.0f)) {
         Control_LatchFault(CONTROL_FAULT_EMERGENCY);
         __set_PRIMASK(saved);
@@ -174,7 +196,19 @@ void ClosedLoop_Drive(float base, float turn, int16_t actual_l, int16_t actual_r
 {
     (void)actual_l;
     (void)actual_r;
-    Control_SetTargets(base - turn, base + turn);
+    float left = base - turn, right = base + turn;
+#if CAR_TUNED_PI_ENABLED
+    if (!Autotune_IsEnabled()) {
+        float peak = left > right ? left : right;
+        if (peak > CAR_TUNED_PEAK) {
+            left *= CAR_TUNED_PEAK / peak;
+            right *= CAR_TUNED_PEAK / peak;
+            if (left > CAR_TUNED_PEAK) left = CAR_TUNED_PEAK;
+            if (right > CAR_TUNED_PEAK) right = CAR_TUNED_PEAK;
+        }
+    }
+#endif
+    Control_SetTargets(left, right);
 }
 
 void Control_StartTimer(void)
@@ -217,6 +251,9 @@ void Control_TimerIRQ(void)
     count_r = (uint16_t)TIM4->CNT;
     current.raw_l = encoder_sign_l * Encoder_Delta16(count_l, previous_l);
     current.raw_r = encoder_sign_r * Encoder_Delta16(count_r, previous_r);
+    if (current.raw_l == 0 && current.raw_r == 0) {
+        if (current.quiet_ticks < 1000u) ++current.quiet_ticks;
+    } else current.quiet_ticks = 0u;
     previous_l = count_l;
     previous_r = count_r;
     /* Unsigned arithmetic gives defined wrap; consumers use modular deltas. */
@@ -239,8 +276,8 @@ void Control_TimerIRQ(void)
     if (drive_enabled && current.fault == CONTROL_FAULT_NONE) {
         out_l = PID_Incremental_Calc(&pid_L, requested_l, filtered_l);
         out_r = PID_Incremental_Calc(&pid_R, requested_r, filtered_r);
-        /* Test mode is forward only; zero target is a deliberate short brake. */
-        if (Autotune_IsEnabled()) {
+        /* Bench/tuned PI is forward only; zero target cancels PWM. */
+        if (Autotune_IsEnabled() || CAR_TUNED_PI_ENABLED) {
             if (out_l < 0.0f || requested_l == 0.0f) out_l = pid_L.output = 0.0f;
             if (out_r < 0.0f || requested_r == 0.0f) out_r = pid_R.output = 0.0f;
         }

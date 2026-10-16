@@ -1,7 +1,11 @@
 #ifndef MPU6050_H
 #define MPU6050_H
 
+#ifdef CAR_HOST_TEST
+#include "host_hal.h"
+#else
 #include "stm32f1xx_hal.h"
+#endif
 
 /* HAL 的 DevAddress 参数使用左移一位的地址；AD0=0 时 7-bit 地址为 0x68。 */
 #define MPU6050_ADDR         (0x68U << 1)
@@ -28,7 +32,7 @@ typedef struct {
 
 uint8_t MPU6050_Init(I2C_HandleTypeDef *hi2c);
 uint8_t MPU6050_Read(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *d);
-void    MPU6050_CalibrateBias(I2C_HandleTypeDef *hi2c,
+uint8_t MPU6050_CalibrateBias(I2C_HandleTypeDef *hi2c,
                               float *bgx, float *bgy, float *bgz, uint16_t n);
 
 #endif

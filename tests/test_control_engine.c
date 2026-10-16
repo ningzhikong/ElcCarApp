@@ -1,4 +1,5 @@
 #include "control.h"
+#include "oled.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,8 +12,30 @@ TestCoreDebug test_debug;
 TestDwt test_dwt;
 uint32_t SystemCoreClock = 72000000u;
 int htim2, htim3, htim4;
+int hi2c1, test_i2c_busy;
 static uint32_t now, mask;
 static int test_mode;
+static unsigned i2c_calls;
+static int i2c_error, i2c_race, check_pixels;
+void HAL_Delay(uint32_t ms) { now += ms; }
+int HAL_I2C_Master_Transmit(void *h, uint16_t address, uint8_t *data, uint16_t n, uint32_t timeout)
+{
+    (void)h; assert(address == 0x78 && timeout == 3 && n <= 17);
+    ++i2c_calls;
+    if (check_pixels && data[0] == 0x40) {
+        assert(n == 17);
+        for (unsigned i = 1; i < n; ++i) assert(data[i] == 0xa5);
+    }
+    /* Emulate BUSY appearing after the precheck: at most one 26ms wait. */
+    if (i2c_race) {
+        for (unsigned i = 0; i < 26; ++i) {
+            ++now; DWT->CYCCNT += 72000;
+            if (now % 10 == 0) { TIM1->SR |= TIM_SR_UIF; Control_TimerIRQ(); }
+        }
+        return HAL_BUSY;
+    }
+    return i2c_error ? HAL_ERROR : HAL_OK;
+}
 
 uint32_t __get_PRIMASK(void) { return mask; }
 void __disable_irq(void) { mask = 1u; }
@@ -62,7 +85,52 @@ int main(int argc, char **argv)
     Motor_Init();
     Control_StartTimer();
     assert(TIM1->PSC == 7199u && TIM1->ARR == 99u && TIM1->DIER == TIM_DIER_UIE);
-    if (!strcmp(argv[1], "sampling")) {
+#if CAR_TUNED_PI_ENABLED
+    if (!strcmp(argv[1], "tuned_profile")) {
+        assert(pid_L.kp == 2.25f && pid_R.kp == 2.5f && pid_L.ki == .35f && pid_R.ki == .4f);
+        assert(pid_L.kd == 0 && pid_R.kd == 0 && pid_L.max_output == 60);
+        ClosedLoop_Drive(25, 18, 0, 0); view = tick(10, -2, 2);
+        assert(view.raw_l == 2 && view.raw_r == 2);
+        assert(fabsf(view.target_l - 35.0f/43.0f) < .00001f && view.target_r == 5);
+        for (unsigned base = 1; base < 100; ++base) {
+            ClosedLoop_Drive((float)base, (float)base * .8f, 0, 0);
+            view = tick(10, 0, 0);
+            assert(view.fault == 0 && view.target_l <= 5 && view.target_r <= 5);
+            assert(view.pwm_l >= 0 && view.pwm_l <= 60 && view.pwm_r >= 0 && view.pwm_r <= 60);
+        }
+        Control_SetTargets(0, 0); view = tick(10, -2, 2);
+        assert(view.pwm_l == 0 && view.pwm_r == 0);
+        Control_SetTargets(-1, 1); assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
+        puts("control_tuned_profile: PASS"); return 0;
+    }
+#endif
+    if (!strcmp(argv[1], "quiet")) {
+        for (unsigned i = 0; i < 30; ++i) view = tick(10, 0, 0);
+        assert(view.quiet_ticks == 30);
+        view = tick(10, 1, 0); assert(view.quiet_ticks == 0);
+    } else if (!strcmp(argv[1], "oled_busy")) {
+        Control_SetTargets(10, 10); test_i2c_busy = 1;
+        OLED_ShowFrame(); OLED_Poll();
+        assert(i2c_calls == 0 && now == 0 && Control_GetFault() == 0);
+    } else if (!strcmp(argv[1], "oled_race")) {
+        now = 6; DWT->CYCCNT += 6 * 72000; Control_SetTargets(10, 10);
+        i2c_race = 1; OLED_ShowFrame(); OLED_Poll();
+        assert(i2c_calls == 1 && now == 32 && Control_GetFault() == 0);
+        Control_SetTargets(10, 10); OLED_ShowFrame(); OLED_Poll();
+        assert(i2c_calls == 1);
+    } else if (!strcmp(argv[1], "oled_frame")) {
+        extern uint8_t OLED_GRAM[8][128];
+        memset(OLED_GRAM, 0xa5, sizeof OLED_GRAM); OLED_ShowFrame(); OLED_NewFrame();
+        check_pixels = 1;
+        for (unsigned i = 0; i < 88; ++i) {
+            unsigned before = i2c_calls; OLED_Poll(); assert(i2c_calls == before + 1);
+        }
+        OLED_Poll(); assert(i2c_calls == 88);
+    } else if (!strcmp(argv[1], "oled_error")) {
+        i2c_error = 1; OLED_ShowFrame(); OLED_Poll(); assert(i2c_calls == 1);
+        i2c_error = 0; OLED_ShowFrame(); OLED_Poll(); assert(i2c_calls == 1);
+        now += 50; OLED_Poll(); assert(i2c_calls == 2);
+    } else if (!strcmp(argv[1], "sampling")) {
         view = tick(10, -5, 3);
         assert(view.raw_l == -5 && view.raw_r == 3 && view.position_l == -5);
         assert(view.period_us == 10000u && TIM2->CNT == 65531u);

@@ -6,13 +6,29 @@
 #include "main.h"
 #endif
 #include "control_math.h"
+#ifdef CAR_TUNED_CONFIG_HEADER
+#include CAR_TUNED_CONFIG_HEADER
+#else
+#include "motor_tuning.h"
+#endif
+#if CAR_TUNED_PI_ENABLED && CAR_TUNED_PROFILE_VERSION != 1
+#error Unsupported tuned motor profile
+#endif
 
 #define CONTROL_PERIOD_MS 10u
 #ifndef CAR_ENCODER_SIGN_LEFT
+#if CAR_TUNED_PI_ENABLED
+#define CAR_ENCODER_SIGN_LEFT CAR_TUNED_SIGN_LEFT
+#else
 #define CAR_ENCODER_SIGN_LEFT 1
 #endif
+#endif
 #ifndef CAR_ENCODER_SIGN_RIGHT
+#if CAR_TUNED_PI_ENABLED
+#define CAR_ENCODER_SIGN_RIGHT CAR_TUNED_SIGN_RIGHT
+#else
 #define CAR_ENCODER_SIGN_RIGHT 1
+#endif
 #endif
 #if (CAR_ENCODER_SIGN_LEFT != 1 && CAR_ENCODER_SIGN_LEFT != -1) || \
     (CAR_ENCODER_SIGN_RIGHT != 1 && CAR_ENCODER_SIGN_RIGHT != -1)
@@ -25,7 +41,7 @@
 #define CONTROL_FAULT_EMERGENCY 4u
 
 typedef struct {
-    uint32_t tick_ms, period_us, late_ticks, fault;
+    uint32_t tick_ms, period_us, late_ticks, fault, quiet_ticks;
     int32_t raw_l, raw_r, position_l, position_r;
     float speed_l, speed_r, target_l, target_r, pwm_l, pwm_r;
 } ControlView;

@@ -1,53 +1,31 @@
-#ifndef __CAR_FSM_H__
-#define __CAR_FSM_H__
-
+#ifndef CAR_FSM_H
+#define CAR_FSM_H
+#ifdef CAR_HOST_TEST
+#include "host_hal.h"
+#else
 #include "main.h"
-
+#endif
 typedef enum {
-    SYS_STATE_STANDBY = 0, 
-    SYS_STATE_VISION,      
-    SYS_STATE_RUN_ABCD,    
-    SYS_STATE_RUN_ACBD,    
-    SYS_STATE_BRAKE        
+    SYS_STATE_STANDBY = 0, SYS_STATE_VISION, SYS_STATE_RUN_ABCD,
+    SYS_STATE_RUN_ACBD, SYS_STATE_BRAKE, SYS_STATE_FAULT
 } SystemState_t;
-
-/* ACBD 轨迹细分子状态 */
+typedef enum { ACBD_TO_C = 0, ACBD_LINE_TO_B, ACBD_TO_D, ACBD_LINE_TO_A } ACBD_SubPhase_t;
+typedef enum { COLOR_UNKNOWN = 0, COLOR_BLUE, COLOR_RED } VisionColor_t;
 typedef enum {
-    ACBD_TO_C = 0,
-    ACBD_LINE_TO_B,
-    ACBD_TO_D,
-    ACBD_LINE_TO_A
-} ACBD_SubPhase_t;
-
-/* 颜色枚举 */
-typedef enum {
-    COLOR_UNKNOWN = 0,
-    COLOR_BLUE,
-    COLOR_RED
-} VisionColor_t;
-
-/* PID 控制器结构体 */
-typedef struct {
-    float kp, ki, kd;
-    float err, err_last;
-    float output;
-    float max_output;
-} PID_t;
-
-/* 全局可导出的系统变量 */
+    FSM_FAULT_NONE = 0, FSM_FAULT_CONTROL, FSM_FAULT_IMU,
+    FSM_FAULT_ADC, FSM_FAULT_LINE_LOST, FSM_FAULT_ROUTE_TIMEOUT,
+    FSM_FAULT_LAP_SEQUENCE
+} FSM_Fault_t;
 extern volatile SystemState_t g_system_state;
-extern volatile uint8_t g_target_laps;
-extern volatile uint8_t g_current_laps;
+extern ACBD_SubPhase_t g_acbd_phase;
+extern volatile FSM_Fault_t g_fsm_fault;
+extern volatile uint8_t g_target_laps, g_current_laps;
 extern volatile VisionColor_t g_vision_color;
-extern volatile int16_t speed_L;
-extern volatile int16_t speed_R;
-
-/* 核心接口函数 */
+extern volatile int16_t speed_L, speed_R;
 void Car_System_Init(void);
 void FSM_KeyScan(void);
-void FSM_Timer1s_Tick(void);     // 1s 中断：处理视觉蜂鸣器/LED闪烁
-void FSM_ControlLoop_10ms(void); // 10ms 中断：核心控制闭环
-void FSM_OLED_Update(void);      // 主循环调用：非阻塞刷新显存
+void FSM_Timer1s_Tick(void);
+void FSM_ControlLoop_10ms(void);
+void FSM_OLED_Update(void);
 void FSM_VisionRxByte(uint8_t byte);
-
-#endif /* __CAR_FSM_H__ */
+#endif

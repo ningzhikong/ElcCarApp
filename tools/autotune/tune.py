@@ -147,7 +147,8 @@ class Experiments:
                 result = bench.evaluate(rows, self.args.peak, self.args.pwm_limit)
                 board.wait_stopped()
                 result.update(source=self.source, experiment_id=self.sequence,
-                              gains=list(gains), firmware_info=list(self.identity))
+                              gains=list(gains), firmware_info=list(self.identity),
+                              trace_file=prefix.with_suffix('.csv').relative_to(self.folder).as_posix())
                 save(prefix.with_suffix('.json'), result)
                 results.append(result)
             save(group / 'group.json', group_stats(results))
@@ -237,9 +238,11 @@ def optimize(experiments, provider, args, folder):
 
     def checkpoint(status):
         report = {'source': experiments.source, 'profile': {'protocol': bench.HELLO,
-                  'firmware_info': experiments.identity, 'peak': args.peak, 'pwm_limit': args.pwm_limit,
+                  'firmware_info': experiments.identity, 'controller': bench.CONTROLLER,
+                  'peak': args.peak, 'pwm_limit': args.pwm_limit,
                   'sign_left': args.sign_left, 'sign_right': args.sign_right},
                   'status': status, 'best_gains': list(best), 'best_statistics': group_stats(best_results),
+                  'best_experiments': best_results,
                   'termination': termination,
                   'best_response': min(best_results, key=lambda r: abs(r['score'] - group_stats(best_results)['median'])),
                   'decisions': decisions, 'groups': history}

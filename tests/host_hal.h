@@ -7,6 +7,27 @@ typedef enum { GPIO_PIN_RESET = 0, GPIO_PIN_SET = 1 } GPIO_PinState;
 #define ModeChange_GPIO_Port ((void *)1)
 #define ModeChange_Pin 15u
 #define HAL_OK 0
+#define HAL_ERROR 1
+#define HAL_BUSY 2
+typedef int I2C_HandleTypeDef;
+#define GPIOA ((void *)1)
+#define GPIOB ((void *)2)
+#define GPIO_PIN_5 32u
+#define GPIO_PIN_7 128u
+#define GPIO_PIN_11 2048u
+#define GPIO_PIN_12 4096u
+#define I2C_FLAG_BUSY 1u
+extern int test_i2c_busy;
+#define __HAL_I2C_GET_FLAG(h, flag) ((void)(h), (void)(flag), test_i2c_busy)
+int HAL_ADC_Start(void *h);
+int HAL_ADC_Stop(void *h);
+int HAL_ADC_PollForConversion(void *h, uint32_t timeout);
+uint32_t HAL_ADC_GetValue(void *h);
+int HAL_I2C_Master_Transmit(void *h, uint16_t address, uint8_t *data, uint16_t n, uint32_t timeout);
+int HAL_I2C_Mem_Read(I2C_HandleTypeDef *h, uint16_t address, uint16_t reg, uint16_t width,
+                     uint8_t *data, uint16_t n, uint32_t timeout);
+int HAL_I2C_Mem_Write(I2C_HandleTypeDef *h, uint16_t address, uint16_t reg, uint16_t width,
+                      uint8_t *data, uint16_t n, uint32_t timeout);
 extern int huart1;
 uint32_t __get_PRIMASK(void);
 void __disable_irq(void);
