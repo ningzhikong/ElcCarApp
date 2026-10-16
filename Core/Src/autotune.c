@@ -11,6 +11,10 @@
 #define HEARTBEAT_MS 1000u
 #define DURATION_MS 5500u
 #define SAMPLE_MS 50u
+#define ARM_TIMEOUT_MS 5000u
+#ifndef CAR_BUILD_ID
+#define CAR_BUILD_ID "unidentified"
+#endif
 #define STATE_IDLE 0u
 #define STATE_RUN 1u
 #define STATE_DONE 2u
@@ -36,9 +40,10 @@ typedef struct {
 } Sample;
 
 static uint8_t enabled;
-static volatile uint8_t armed, pending_run, ack_pending, io_error;
+static volatile uint8_t armed, pending_run, ack_pending, io_error, start_expired;
 static volatile uint32_t state, fault, count, elapsed, heartbeat_tick;
 static uint32_t start_tick, next_sample, quiet_ticks, stall_l, stall_r, wrong_ticks;
+static volatile uint32_t arm_tick;
 static RunConfig pending, active;
 static Sample trace[TRACE_CAPACITY];
 static uint8_t rx_queue[256];
@@ -115,7 +120,14 @@ static float target_at(uint32_t time_ms)
 
 void Autotune_BeforeControl(uint32_t now_ms)
 {
+    if (armed && state != STATE_RUN && now_ms - arm_tick >= ARM_TIMEOUT_MS)
+        armed = 0u;
     if (pending_run) {
+        if (!armed) {
+            finish(STATE_FAULT, 17u);
+            start_expired = 1u;
+            return;
+        }
         active = pending;
         pending_run = 0u;
         count = elapsed = next_sample = 0u;
@@ -143,16 +155,21 @@ void Autotune_BeforeControl(uint32_t now_ms)
 void Autotune_AfterControl(const ControlView *v)
 {
     Sample *s;
-    if (v->raw_l >= -1 && v->raw_l <= 1 && v->raw_r >= -1 && v->raw_r <= 1) {
+    if (v->raw_l == 0 && v->raw_r == 0) {
         if (quiet_ticks < 1000u) ++quiet_ticks;
     } else quiet_ticks = 0u;
     if (state == STATE_RUN) {
-        if (v->raw_l > 100 || v->raw_l < -100 || v->raw_r > 100 || v->raw_r < -100)
+        if (v->raw_l > 100 || v->raw_l < -100 || v->raw_r > 100 || v->raw_r < -100) {
             finish(STATE_FAULT, FAULT_SPEED);
+            return;
+        }
         if ((v->target_l > 0.0f && v->raw_l < -2) ||
             (v->target_r > 0.0f && v->raw_r < -2)) ++wrong_ticks;
         else wrong_ticks = 0u;
-        if (wrong_ticks >= 3u) finish(STATE_FAULT, FAULT_DIRECTION);
+        if (wrong_ticks >= 3u) {
+            finish(STATE_FAULT, FAULT_DIRECTION);
+            return;
+        }
         if (v->pwm_l >= 80.0f && v->raw_l >= -1 && v->raw_l <= 1) ++stall_l;
         else stall_l = 0u;
         if (v->pwm_r >= 80.0f && v->raw_r >= -1 && v->raw_r <= 1) ++stall_r;
@@ -214,9 +231,12 @@ static void command(char *line)
     if (token || n == 9u) { send_text("ERR COMMAND\n"); return; }
     if (n == 1u && !strcmp(tokens[0], "HELLO")) {
         send_text("HELLO ELC_AUTOTUNE_V1 INC_PI_COUNTS_10MS 10 50 5500\n");
+    } else if (n == 1u && !strcmp(tokens[0], "INFO")) {
+        send_text("INFO ELC_INC_PI_V1 " CAR_BUILD_ID "\n");
     } else if (n == 1u && !strcmp(tokens[0], "STOP")) {
         saved = lock();
         ack_pending = 0u;
+        start_expired = 0u;
         finish(STATE_STOPPED, 0u);
         __set_PRIMASK(saved);
         send_text("STOPPED\n");
@@ -256,7 +276,7 @@ static void command(char *line)
         }
         Control_ClearFault();
         Control_SetEncoderSigns(left, right);
-        state = STATE_IDLE; fault = 0u; armed = 1u;
+        state = STATE_IDLE; fault = 0u; arm_tick = HAL_GetTick(); armed = 1u;
         __set_PRIMASK(saved);
         snprintf(out, sizeof out, "ARMED %d %d\n", left, right);
         send_text(out);
@@ -320,6 +340,10 @@ void Autotune_Poll(void)
         __set_PRIMASK(saved);
         length = 0u; discard = 1u;
         Serial_StartAutotune();
+    }
+    if (start_expired) {
+        start_expired = 0u;
+        send_text("ERR ARM_EXPIRED\n");
     }
     if (ack_pending) {
         RunConfig applied;

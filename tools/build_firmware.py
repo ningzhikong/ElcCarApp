@@ -1,5 +1,7 @@
 """Build the Keil project into .build without touching the board or IDE outputs."""
 import argparse
+import hashlib
+import json
 from pathlib import Path
 import subprocess
 import xml.etree.ElementTree as ET
@@ -13,6 +15,18 @@ def build(keil):
     output.mkdir(parents=True, exist_ok=True)
     project = ROOT / 'MDK-ARM/ElcCarApp.uvprojx'
     target = ET.parse(project).find('./Targets/Target')
+    digest = hashlib.sha256(b'armcc5-cortexm3-microlib-O1-v1')
+    compiler_version = subprocess.check_output([tools / 'armcc.exe', '--vsn'])
+    digest.update(compiler_version.replace(b'\r\n', b'\n'))
+    inputs = sorted([*ROOT.glob('Core/**/*.c'), *ROOT.glob('Core/**/*.h'),
+                     *ROOT.glob('Drivers/**/*.c'), *ROOT.glob('Drivers/**/*.h'),
+                     ROOT / 'ElcCarApp.ioc', project,
+                     ROOT / 'MDK-ARM/startup_stm32f103xb.s', Path(__file__).resolve()])
+    for item in inputs:
+        digest.update(item.relative_to(ROOT).as_posix().encode('utf-8') + b'\0')
+        digest.update(item.read_bytes().replace(b'\r\n', b'\n') + b'\0')
+    build_id = digest.hexdigest()[:16]
+    (output / 'build_id.json').write_text(json.dumps({'build_id': build_id}), encoding='utf-8')
     includes = [ROOT / p for p in (
         'Core/Inc', 'Drivers/STM32F1xx_HAL_Driver/Inc',
         'Drivers/STM32F1xx_HAL_Driver/Inc/Legacy',
@@ -43,6 +57,7 @@ def build(keil):
             run([tools / 'armcc.exe', '--cpu', 'Cortex-M3', '--c99', '-O1', '-g',
                  '--split_sections', '--library_type=microlib', '-D__MICROLIB',
                  '-DSTM32F103xB', '-DUSE_HAL_DRIVER',
+                 f'-DCAR_BUILD_ID="{build_id}"',
                  *[f'-I{p}' for p in includes], '-c', source, '-o', obj])
         else:
             run([tools / 'armasm.exe', '--cpu', 'Cortex-M3', '--pd', '__MICROLIB SETA 1',

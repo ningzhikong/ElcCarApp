@@ -120,6 +120,11 @@ void Control_ReadView(ControlView *view)
 void Control_SetEncoderSigns(int left, int right)
 {
     uint32_t saved = lock();
+    if (drive_enabled || (left != 1 && left != -1) || (right != 1 && right != -1)) {
+        Control_LatchFault(CONTROL_FAULT_EMERGENCY);
+        __set_PRIMASK(saved);
+        return;
+    }
     encoder_sign_l = left;
     encoder_sign_r = right;
     previous_l = (uint16_t)TIM2->CNT;
@@ -132,10 +137,19 @@ void Control_SetEncoderSigns(int left, int right)
 void Control_ConfigurePI(float kp_l, float ki_l, float kp_r, float ki_r, float limit)
 {
     uint32_t saved = lock();
+    if (drive_enabled || !(kp_l >= 0.0f && kp_l <= 10.0f && ki_l >= 0.0f && ki_l <= 2.0f &&
+        kp_r >= 0.0f && kp_r <= 10.0f && ki_r >= 0.0f && ki_r <= 2.0f && limit >= 20.0f && limit <= 200.0f) ||
+        limit != (float)(uint32_t)limit) {
+        Control_LatchFault(CONTROL_FAULT_EMERGENCY);
+        __set_PRIMASK(saved);
+        return;
+    }
     Control_Stop();
     pid_L.kp = kp_l; pid_L.ki = ki_l; pid_L.kd = 0.0f;
     pid_R.kp = kp_r; pid_R.ki = ki_r; pid_R.kd = 0.0f;
     pid_L.max_output = pid_R.max_output = limit;
+    filtered_l = filtered_r = 0.0f;
+    current.speed_l = current.speed_r = 0.0f;
     __set_PRIMASK(saved);
 }
 

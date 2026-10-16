@@ -6,7 +6,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS = ('math', 'validation', 'cancel_pending', 'complete', 'heartbeat',
-             'direction', 'stall', 'stop_key', 'uart_fault', 'frame', 'overflow')
+             'direction', 'stall', 'stop_key', 'uart_fault', 'frame', 'overflow', 'slow_motion', 'arm_expiry', 'pending_expiry')
 
 
 if __name__ == '__main__':
@@ -27,9 +27,9 @@ if __name__ == '__main__':
                     '-DCAR_HOST_TEST', f'-I{ROOT / "tests"}', f'-I{ROOT / "Core/Inc"}',
                     str(ROOT / 'Core/Src/control_math.c'), str(ROOT / 'Core/Src/control.c'),
                     str(ROOT / 'tests/test_control_engine.c'), '-lm', '-o', str(engine)], check=True)
-    engine_scenarios = ('sampling', 'stale', 'timing', 'stop', 'test_zero', 'cycle_wrap', 'invalid_target')
+    engine_scenarios = ('sampling', 'stale', 'timing', 'stop', 'test_zero', 'cycle_wrap', 'invalid_target', 'sign_change', 'invalid_gains', 'fractional_limit')
     for scenario in engine_scenarios:
         subprocess.run([str(engine), scenario], check=True)
     print(f'{len(SCENARIOS) + len(engine_scenarios)} C host scenarios passed; hardware timing/IO not exercised.')
     subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(ROOT / 'tests'),
-                    '-p', 'test_bench.py', '-v'], check=True)
+                    '-p', 'test_*.py', '-v'], check=True)

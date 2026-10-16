@@ -12,18 +12,36 @@ FIELDS = ('time_ms', 'raw_l', 'raw_r', 'target_l', 'target_r', 'speed_l', 'speed
           'pwm_l', 'pwm_r', 'period_us', 'flags')
 
 
+def validate_parameters(args):
+    limits = ((args.kp_left, 0, 10), (args.ki_left, 0, 2), (args.kp_right, 0, 10),
+              (args.ki_right, 0, 2), (args.peak, 1, 25), (args.pwm_limit, 20, 200))
+    if any(type(v) not in (int, float) or not math.isfinite(v) or not lo <= v <= hi
+           for v, lo, hi in limits):
+        raise ValueError('Experiment parameters outside initial bench bounds')
+    if (type(args.pwm_limit) is not int or type(args.sign_left) is not int or type(args.sign_right) is not int
+            or args.sign_left not in (-1, 1) or args.sign_right not in (-1, 1)):
+        raise ValueError('PWM limit must be an integer and encoder signs must be +/-1')
+    for name in ('kp_left', 'ki_left', 'kp_right', 'ki_right'):
+        setattr(args, name, round(getattr(args, name), 6))
+    args.peak = round(args.peak, 4)
+
+
 def target_at(t, peak):
     return 0.0 if t < 500 or t >= 4500 else .4 * peak if t < 1500 else peak if t < 3000 else .5 * peak
 
 
 def validate_trace(rows, peak, limit):
     """Reject invalid experiments before calculating either wheel's score."""
+    if not math.isfinite(peak) or not 1 <= peak <= 25 or not 20 <= limit <= 200 or int(limit) != limit:
+        raise ValueError('Invalid experiment profile')
     if len(rows) != 111:
         raise ValueError('Expected 111 samples, including start and local stop')
     for index, row in enumerate(rows):
         if len(row) != 11 or not all(math.isfinite(value) for value in row):
             raise ValueError('Malformed/non-finite telemetry')
         t, raw_l, raw_r, target_l, target_r, speed_l, speed_r, pwm_l, pwm_r, period, flags = row
+        if any(value != int(value) for value in (t, raw_l, raw_r, pwm_l, pwm_r, period, flags)):
+            raise ValueError('Counter/time/PWM/flag fields must be integers')
         if abs(t - index * 50) > 15 or (index and t <= rows[index - 1][0]):
             raise ValueError('Missing, duplicated or late samples')
         if not 5000 <= period <= 15000:
@@ -86,8 +104,12 @@ class Board:
     def __init__(self, port, folder):
         import serial
         self.connection = serial.Serial(port, 115200, timeout=.1, write_timeout=.5)
-        self.connection.reset_input_buffer()
-        self.audit = (folder / 'serial.jsonl').open('w', encoding='utf-8')
+        try:
+            self.connection.reset_input_buffer()
+            self.audit = (folder / 'serial.jsonl').open('w', encoding='utf-8')
+        except BaseException:
+            self.connection.close()
+            raise
         self.buffer = bytearray()
 
     def send(self, command):
@@ -127,26 +149,45 @@ class Board:
             raise ValueError('Invalid STATUS')
         return list(map(int, data[1:]))
 
-    def run(self, args):
-        self.send('HELLO')
-        if self.read() != HELLO:
-            raise RuntimeError('Wrong firmware, profile or boot mode')
+    def wait_stopped(self):
         self.stop()
         deadline = time.monotonic() + 3
         while True:
             status = self.status()
+            if status[1] != 3 or status[2] != 0:
+                raise RuntimeError(f'MCU fault after STOP: {status}')
             if status[-1] == 1:
-                break
-            if time.monotonic() > deadline:
-                raise RuntimeError('Encoder motion has not settled')
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Drive cancelled, but encoder motion did not settle')
             time.sleep(.1)
+
+    def run(self, args, experiment_id=1):
+        validate_parameters(args)
+        if type(experiment_id) is not int or not 1 <= experiment_id <= 1000000000:
+            raise ValueError('Invalid experiment id')
+        self.send('HELLO')
+        if self.read() != HELLO:
+            raise RuntimeError('Wrong firmware, profile or boot mode')
+        self.send('INFO')
+        info = self.read().split()
+        if len(info) != 3 or info[:2] != ['INFO', 'ELC_INC_PI_V1']:
+            raise RuntimeError('Firmware identity is unavailable')
+        identity = tuple(info[1:])
+        if (getattr(args, 'require_identified_firmware', False)
+                and (len(info[2]) != 16 or any(c not in '0123456789abcdef' for c in info[2]))):
+            raise RuntimeError('Automatic search requires an identified build from build_firmware.py')
+        if getattr(self, 'firmware_info', identity) != identity:
+            raise RuntimeError('Firmware changed within this experiment session')
+        self.firmware_info = identity
+        self.wait_stopped()
         self.send(f'ARM {args.sign_left} {args.sign_right}')
         if self.read() != f'ARMED {args.sign_left} {args.sign_right}':
             raise RuntimeError('ARM was not confirmed')
         gains = [round(g, 6) for g in (args.kp_left, args.ki_left, args.kp_right, args.ki_right)]
-        self.send('RUN 1 ' + ' '.join(f'{g:.6f}' for g in gains) + f' {args.peak:.4f} {args.pwm_limit}')
+        self.send(f'RUN {experiment_id} ' + ' '.join(f'{g:.6f}' for g in gains) + f' {args.peak:.4f} {args.pwm_limit}')
         ack = self.read().split()
-        if len(ack) != 8 or ack[:2] != ['ACK', '1']:
+        if len(ack) != 8 or ack[:2] != ['ACK', str(experiment_id)]:
             raise ValueError('Invalid applied-parameter ACK')
         values = list(map(float, ack[2:]))
         if any(not math.isfinite(x) or abs(x - y) > .000001 for x, y in zip(values, gains + [args.peak, args.pwm_limit])):
@@ -156,7 +197,7 @@ class Board:
             self.send('PING')
             status = self.status()
             request, state, fault, count, elapsed, armed, quiet = status
-            if request != 1 or fault or state not in (1, 2):
+            if request != experiment_id or fault or state not in (1, 2):
                 raise RuntimeError(f'MCU experiment stopped/faulted: {status}')
             if state == 2:
                 if count != 111 or not 5500 <= elapsed <= 5515:
@@ -166,11 +207,15 @@ class Board:
                 raise TimeoutError('Host experiment deadline exceeded')
             time.sleep(.1)
         self.send('DUMP')
-        if self.read() != 'BEGIN 1 111':
+        if self.read() != f'BEGIN {experiment_id} 111':
             raise ValueError('Invalid dump start')
         rows = []
+        deadline = time.monotonic() + 5
         for _ in range(111):
-            row = self.read().split(',')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Dump deadline exceeded')
+            row = self.read(min(2, remaining)).split(',')
             if len(row) != len(FIELDS):
                 raise ValueError('Invalid CSV sample')
             rows.append(tuple(float(v) for v in row))
@@ -195,11 +240,10 @@ def main():
     parser.add_argument('--pwm-limit', type=int, required=True)
     parser.add_argument('--output', type=Path, default=Path(__file__).parent / 'runs')
     args = parser.parse_args()
-    limits = ((args.kp_left, 0, 10), (args.ki_left, 0, 2), (args.kp_right, 0, 10),
-              (args.ki_right, 0, 2), (args.peak, 1, 25), (args.pwm_limit, 20, 200))
-    if any(not math.isfinite(value) or not low <= value <= high for value, low, high in limits):
-        parser.error('Experiment parameters outside initial bench bounds')
-    args.peak = round(args.peak, 4)
+    try:
+        validate_parameters(args)
+    except ValueError as exc:
+        parser.error(str(exc))
     folder = args.output / datetime.now().strftime('%Y%m%d_%H%M%S_%f')
     folder.mkdir(parents=True, exist_ok=False)
     config = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}
@@ -214,19 +258,10 @@ def main():
             writer.writerow(FIELDS)
             writer.writerows(rows)
         result = evaluate(rows, args.peak, args.pwm_limit)
-        result.update(source='real_motor', requested=config, protocol=HELLO)
+        result.update(source='real_motor', requested=config, protocol=HELLO,
+                      firmware_info=board.firmware_info)
         # Confirm cancellation and physical settling before returning success.
-        board.stop()
-        deadline = time.monotonic() + 3
-        while True:
-            status = board.status()
-            if status[1] != 3 or status[2] != 0:
-                raise RuntimeError(f'MCU fault after STOP: {status}')
-            if status[-1] == 1:
-                break
-            if time.monotonic() >= deadline:
-                raise RuntimeError('Drive cancelled, but encoder motion did not settle')
-            time.sleep(.1)
+        board.wait_stopped()
         stopped_and_quiet = True
         (folder / 'summary.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
         print(f'Validated fixed-gain bench result: {folder}')

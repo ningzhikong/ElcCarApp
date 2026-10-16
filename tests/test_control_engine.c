@@ -106,6 +106,17 @@ int main(int argc, char **argv)
         Control_SetTargets(NAN, 10.0f);
         view = tick(10, 0, 0);
         assert(view.fault == CONTROL_FAULT_EMERGENCY && view.pwm_l == 0.0f);
+    } else if (!strcmp(argv[1], "sign_change")) {
+        Control_SetTargets(10.0f, 10.0f);
+        tick(10, 0, 0);
+        Control_SetEncoderSigns(-1, 1);
+        assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY && TIM3->CCR3 == 0u);
+    } else if (!strcmp(argv[1], "invalid_gains")) {
+        Control_ConfigurePI(NAN, .3f, 2.0f, .3f, 100.0f);
+        assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY && TIM3->CCR3 == 0u);
+    } else if (!strcmp(argv[1], "fractional_limit")) {
+        Control_ConfigurePI(2.0f, .3f, 2.0f, .3f, 100.5f);
+        assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY && TIM3->CCR3 == 0u);
     } else assert(0);
     printf("control_%s: PASS\n", argv[1]);
     return 0;

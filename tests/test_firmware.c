@@ -130,6 +130,7 @@ int main(int argc, char **argv)
     assert(Autotune_IsEnabled());
     Autotune_Init();
     exchange("HELLO\n", "HELLO ELC_AUTOTUNE_V1 INC_PI_COUNTS_10MS 10 50 5500\n");
+    exchange("INFO\n", "INFO ELC_INC_PI_V1 ");
     if (!strcmp(argv[1], "validation")) {
         exchange("RUN 7 2 .3 2 .3 5 100\n", "ERR NOT_ARMED");
         arm();
@@ -139,10 +140,26 @@ int main(int argc, char **argv)
         exchange("RUN 4294967296 2 .3 2 .3 5 100\n", "ERR GAINS");
         exchange("RUN 7 2 .3 2 .3 5 100 junk\n", "ERR COMMAND");
         assert(configured == 0 && measured.pwm_l == 0.0f);
+    } else if (!strcmp(argv[1], "slow_motion")) {
+        for (unsigned i = 0; i < 40u; ++i) tick(1);
+        exchange("ARM 1 -1\n", "ERR NOT_STOPPED");
+        assert(configured == 0);
+    } else if (!strcmp(argv[1], "arm_expiry")) {
+        arm();
+        for (unsigned i = 0; i < 501u; ++i) tick(0);
+        exchange("RUN 7 2 .3 2 .3 5 100\n", "ERR NOT_ARMED");
+        assert(configured == 0 && measured.pwm_l == 0.0f);
     } else if (!strcmp(argv[1], "cancel_pending")) {
         arm(); feed("RUN 7 2 .3 2 .3 5 100\nSTOP\n");
         tick(0); assert(configured == 0);
         exchange("STATUS\n", "STATUS 0 3 0 0 0 0 1");
+    } else if (!strcmp(argv[1], "pending_expiry")) {
+        arm();
+        for (unsigned i = 0; i < 499u; ++i) tick(0);
+        feed("RUN 7 2 .3 2 .3 5 100\n");
+        clear_output(); tick(0); Autotune_Poll();
+        assert(strstr(output, "ERR ARM_EXPIRED"));
+        assert(configured == 0 && measured.pwm_l == 0.0f);
     } else if (!strcmp(argv[1], "complete")) {
         start();
         for (unsigned i = 0; i < 550u; ++i) {

@@ -72,7 +72,7 @@ class BenchTests(unittest.TestCase):
             bench.evaluate(rows, 5., 100.)
 
     def test_board_adapter_roundtrip(self):
-        replies = [bench.HELLO, 'STOPPED', 'STATUS 0 3 0 0 0 0 1',
+        replies = [bench.HELLO, 'INFO ELC_INC_PI_V1 1234567890abcdef', 'STOPPED', 'STATUS 0 3 0 0 0 0 1',
                    'ARMED 1 -1', 'ACK 1 2.000000 0.300000 2.000000 0.300000 5.0000 100',
                    'STATUS 1 2 0 111 5500 0 0',
                    self.dump_lines[0].replace('BEGIN 7 ', 'BEGIN 1 '), *self.dump_lines[1:]]
@@ -84,13 +84,27 @@ class BenchTests(unittest.TestCase):
         self.assertEqual(board.sent[-1], 'DUMP')
 
     def test_wrong_applied_gains_rejected(self):
-        board = FakeBoard([bench.HELLO, 'STOPPED', 'STATUS 0 3 0 0 0 0 1', 'ARMED 1 -1',
+        board = FakeBoard([bench.HELLO, 'INFO ELC_INC_PI_V1 1234567890abcdef', 'STOPPED', 'STATUS 0 3 0 0 0 0 1', 'ARMED 1 -1',
                            'ACK 1 nan 0.300000 2.000000 0.300000 5.0000 100'])
         args = SimpleNamespace(sign_left=1, sign_right=-1, kp_left=2., ki_left=.3,
                                kp_right=2., ki_right=.3, peak=5., pwm_limit=100)
         with self.assertRaisesRegex(ValueError, 'Applied'):
             board.run(args)
         self.assertNotIn('DUMP', board.sent)
+
+    def test_fractional_counter_rejected(self):
+        rows = [list(row) for row in self.rows]
+        rows[20][1] = .5
+        with self.assertRaisesRegex(ValueError, 'integers'):
+            bench.evaluate(rows, 5., 100.)
+
+    def test_unknown_firmware_cannot_start_search(self):
+        board = FakeBoard([bench.HELLO, 'INFO ELC_INC_PI_V1 unidentified'])
+        args = SimpleNamespace(sign_left=1, sign_right=-1, kp_left=2., ki_left=.3,
+                               kp_right=2., ki_right=.3, peak=5., pwm_limit=100, require_identified_firmware=True)
+        with self.assertRaisesRegex(RuntimeError, 'identified build'):
+            board.run(args)
+        self.assertFalse(any(command.startswith('ARM') for command in board.sent))
 
 
 if __name__ == '__main__':
