@@ -145,8 +145,10 @@ void Autotune_BeforeControl(uint32_t now_ms)
         no_motion_l = no_motion_r = 0u;
         fault = 0u;
         start_tick = heartbeat_tick = now_ms;
-        if (!jog_active)
+        if (!jog_active) {
             Control_ConfigurePI(active.kp_l, active.ki_l, active.kp_r, active.ki_r, active.limit);
+            Control_SetRPMFeedback(active.rpm_mode);
+        }
         state = STATE_RUN;
         ack_pending = jog_active ? 2u : (active.hold_mode ? 4u : (active.rpm_mode ? 3u : 1u));
     }
@@ -287,6 +289,8 @@ static void command(char *line)
             (double)view.speed_l, (double)view.speed_r,
             (unsigned long)view.period_us, (unsigned long)view.fault);
         send_text(out);
+    } else if (n == 1u && !strcmp(tokens[0], "RPMINFO")) {
+        send_text("RPMINFO ELC_RPM_PI_BOXCAR10_V1\n");
     } else if (n == 1u && !strcmp(tokens[0], "CAL")) {
         snprintf(out, sizeof out, "CAL MANUAL_REF_V1 %u %u\n",
             CAR_WHEEL_CPR_LEFT, CAR_WHEEL_CPR_RIGHT);

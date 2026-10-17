@@ -68,14 +68,15 @@ def main():
     parser.add_argument('--port', required=True)
     parser.add_argument('--build-id', required=True)
     parser.add_argument('--rpm', type=float, default=20.)
-    parser.add_argument('--hold', action='store_true', help='Hold RPM for 4s instead of a speed-step profile')
+    parser.add_argument('--hold', action=argparse.BooleanOptionalAction, default=True,
+                        help='Hold RPM for 4s (default); --no-hold selects speed steps')
     parser.add_argument('--cpr-left', type=int, default=1080)
     parser.add_argument('--cpr-right', type=int, default=1320)
     parser.add_argument('--sign-left', type=int, choices=(-1, 1), default=1)
     parser.add_argument('--sign-right', type=int, choices=(-1, 1), default=1)
     for side in ('left', 'right'):
         parser.add_argument(f'--kp-{side}', type=float, default=2.)
-        parser.add_argument(f'--ki-{side}', type=float, default=2.)
+        parser.add_argument(f'--ki-{side}', type=float, default=1.)
     parser.add_argument('--pwm-limit', type=int, default=150)
     parser.add_argument('--output', type=Path, default=Path('.build/hardware_checks'))
     args = parser.parse_args()
@@ -93,6 +94,7 @@ def main():
     folder = args.output / ('match_' + datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
     folder.mkdir(parents=True, exist_ok=False)
     result = {'source': 'fixed_gain_rpm_hold_check' if args.hold else 'fixed_gain_rpm_check',
+              'rpm_controller': 'ELC_RPM_PI_BOXCAR10_V1',
               'profile': 'hold' if args.hold else 'step', 'build_id': args.build_id,
               'rpm': args.peak, 'pwm_limit': args.pwm_limit,
               'gains': [args.kp_left, args.ki_left, args.kp_right, args.ki_right],

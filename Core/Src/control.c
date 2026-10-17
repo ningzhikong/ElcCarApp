@@ -10,6 +10,8 @@ Turn_PID_t pid_turn;
 static volatile ControlView current;
 static uint16_t previous_l, previous_r;
 static float filtered_l, filtered_r;
+static EncoderWindow10 window_l, window_r;
+static uint8_t rpm_feedback;
 static float requested_l, requested_r;
 static int encoder_sign_l = CAR_ENCODER_SIGN_LEFT, encoder_sign_r = CAR_ENCODER_SIGN_RIGHT;
 static volatile uint8_t drive_enabled;
@@ -149,6 +151,7 @@ void Control_SetEncoderSigns(int left, int right)
     previous_l = (uint16_t)TIM2->CNT;
     previous_r = (uint16_t)TIM4->CNT;
     filtered_l = filtered_r = 0.0f;
+    Encoder_WindowReset(&window_l); Encoder_WindowReset(&window_r);
     current.speed_l = current.speed_r = 0.0f;
     __set_PRIMASK(saved);
 }
@@ -209,6 +212,20 @@ void Control_SetTargets(float left, float right)
         requested_r = right;
         target_tick = HAL_GetTick();
         drive_enabled = 1u;
+    }
+    __set_PRIMASK(saved);
+}
+
+void Control_SetRPMFeedback(int enabled)
+{
+    uint32_t saved = lock();
+    if (drive_enabled || (enabled && !Autotune_IsEnabled())) {
+        Control_LatchFault(CONTROL_FAULT_EMERGENCY);
+    } else {
+        rpm_feedback = enabled != 0;
+        Encoder_WindowReset(&window_l); Encoder_WindowReset(&window_r);
+        filtered_l = filtered_r = 0.0f;
+        current.speed_l = current.speed_r = 0.0f;
     }
     __set_PRIMASK(saved);
 }
@@ -280,8 +297,8 @@ void Control_TimerIRQ(void)
     /* Unsigned arithmetic gives defined wrap; consumers use modular deltas. */
     current.position_l = (int32_t)((uint32_t)current.position_l + (uint32_t)current.raw_l);
     current.position_r = (int32_t)((uint32_t)current.position_r + (uint32_t)current.raw_r);
-    filtered_l = Encoder_Filter(filtered_l, current.raw_l);
-    filtered_r = Encoder_Filter(filtered_r, current.raw_r);
+    filtered_l = rpm_feedback ? Encoder_WindowStep(&window_l, current.raw_l) : Encoder_Filter(filtered_l, current.raw_l);
+    filtered_r = rpm_feedback ? Encoder_WindowStep(&window_r, current.raw_r) : Encoder_Filter(filtered_r, current.raw_r);
     current.speed_l = filtered_l;
     current.speed_r = filtered_r;
     current.tick_ms = now;

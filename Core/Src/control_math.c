@@ -1,4 +1,5 @@
 #include "control_math.h"
+#include <string.h>
 
 int32_t Encoder_Delta16(uint16_t current, uint16_t previous)
 {
@@ -9,6 +10,19 @@ int32_t Encoder_Delta16(uint16_t current, uint16_t previous)
 float Encoder_Filter(float previous, int32_t delta)
 {
     return previous + 0.125f * ((float)delta - previous);
+}
+
+void Encoder_WindowReset(EncoderWindow10 *window)
+{
+    memset(window, 0, sizeof *window);
+}
+
+float Encoder_WindowStep(EncoderWindow10 *window, int32_t delta)
+{
+    window->sum += delta - window->samples[window->next];
+    window->samples[window->next] = delta;
+    window->next = (window->next + 1u) % 10u;
+    return (float)window->sum / 10.0f;
 }
 
 void PID_Reset(Speed_PID_t *pid)

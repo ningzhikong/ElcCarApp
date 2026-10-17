@@ -45,6 +45,7 @@ uint32_t Control_GetFault(void) { return control_fault; }
 void Control_ClearFault(void) { control_fault = 0u; Control_Stop(); }
 void Control_ReadView(ControlView *view) { *view = measured; }
 void Control_SetEncoderSigns(int l, int r) { assert(abs(l) == 1 && abs(r) == 1); }
+void Control_SetRPMFeedback(int enabled) { assert(enabled == 0 || enabled == 1); }
 void Control_ConfigurePI(float pl, float il, float pr, float ir, float limit)
 {
     assert(pl == 2.0f && il == 0.3f && pr == 2.0f && ir == 0.3f && limit == (float)pwm_cap);
@@ -114,6 +115,21 @@ static void test_math(void)
     assert(Encoder_Delta16(65531u, 0u) == -5);
     assert(Encoder_Delta16(2u, 65534u) == 4);
     assert(Encoder_Delta16(65534u, 2u) == -4);
+    {
+        EncoderWindow10 window;
+        Encoder_WindowReset(&window);
+        for (unsigned i = 0; i < 100; ++i) {
+            float speed = Encoder_WindowStep(&window, i % 10 < 7 ? 5 : 0);
+            if (i >= 9) assert(speed == 3.5f);
+        }
+        Encoder_WindowReset(&window);
+        for (unsigned i = 0; i < 10; ++i) Encoder_WindowStep(&window, -32768);
+        assert(Encoder_WindowStep(&window, -32768) == -32768.0f);
+        Encoder_WindowReset(&window);
+        assert(Encoder_WindowStep(&window, 10) == 1.0f);
+        for (unsigned i = 0; i < 10; ++i) Encoder_WindowStep(&window, 0);
+        assert(window.sum == 0);
+    }
     for (int delta = -32768; delta < 32768; ++delta) {
         uint16_t previous = 60000u;
         assert(Encoder_Delta16((uint16_t)(previous + delta), previous) == delta);
@@ -145,6 +161,7 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "rpm_profile") || !strcmp(argv[1], "rpm_hold")) {
         int hold = !strcmp(argv[1], "rpm_hold");
         exchange("CAL\n", "CAL MANUAL_REF_V1 1080 1320\n");
+        exchange("RPMINFO\n", "RPMINFO ELC_RPM_PI_BOXCAR10_V1\n");
         arm(); clear_output(); feed(hold ? "HOLDRPM 7 2 .3 2 .3 20 100\n" : "RUNRPM 7 2 .3 2 .3 20 100\n");
         assert(!strstr(output, "RPMACK"));
         for (unsigned i = 0; i <= 550; ++i) {

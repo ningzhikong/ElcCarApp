@@ -53,7 +53,7 @@ class MatchTests(unittest.TestCase):
 
     def test_hold_protocol_ack(self):
         board = FakeBoard('CAL MANUAL_REF_V1 1080 1320')
-        board.replies += ['STOPPED', 'STATUS 0 3 0 0 0 0 1', 'ARMED 1 1',
+        board.replies += ['RPMINFO ELC_RPM_PI_BOXCAR10_V1', 'STOPPED', 'STATUS 0 3 0 0 0 0 1', 'ARMED 1 1',
                           'HOLDACK 1 2.000000 0.300000 2.000000 0.300000 20.0000 150',
                           'STATUS 1 2 0 111 5500 0 0', 'BEGIN 1 111',
                           *[','.join(map(str, row)) for row in trace(hold=True)], 'END']
@@ -99,7 +99,7 @@ class MatchTests(unittest.TestCase):
     def test_rpm_protocol_roundtrip_and_ack_units(self):
         for prefix in ('RPMACK', 'ACK'):
             board = FakeBoard('CAL MANUAL_REF_V1 1080 1320')
-            board.replies += ['STOPPED', 'STATUS 0 3 0 0 0 0 1', 'ARMED 1 1',
+            board.replies += ['RPMINFO ELC_RPM_PI_BOXCAR10_V1', 'STOPPED', 'STATUS 0 3 0 0 0 0 1', 'ARMED 1 1',
                               f'{prefix} 1 2.000000 0.300000 2.000000 0.300000 20.0000 150',
                               'STATUS 1 2 0 111 5500 0 0', 'BEGIN 1 111',
                               *[','.join(map(str, row)) for row in trace()], 'END']
@@ -118,6 +118,15 @@ class MatchTests(unittest.TestCase):
             row[4] = row[3]
         with self.assertRaises(ValueError):
             match.evaluate(rows, 20, 150, (1080, 1320))
+
+    def test_wrong_feedback_estimator_cannot_arm(self):
+        board = FakeBoard('CAL MANUAL_REF_V1 1080 1320')
+        board.replies += ['RPMINFO ELC_RPM_PI_IIR_V1']
+        args = SimpleNamespace(sign_left=1, sign_right=1, kp_left=2., ki_left=1.,
+                               kp_right=2., ki_right=1., peak=20., pwm_limit=150)
+        with self.assertRaisesRegex(RuntimeError, 'estimator'):
+            board.run(args, wheel_cpr=(1080, 1320), hold=True)
+        self.assertFalse(any(c.startswith(('ARM', 'HOLDRPM')) for c in board.sent))
 
 
 if __name__ == '__main__':

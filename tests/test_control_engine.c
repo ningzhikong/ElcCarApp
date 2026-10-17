@@ -105,7 +105,27 @@ int main(int argc, char **argv)
         puts("control_tuned_profile: PASS"); return 0;
     }
 #endif
-    if (!strcmp(argv[1], "jog_output")) {
+    if (!strcmp(argv[1], "rpm_feedback")) {
+        test_mode = 1;
+        Control_SetRPMFeedback(1);
+        for (unsigned i = 0; i < 20; ++i) {
+            int delta = i % 10 < 7 ? 5 : 0;
+            Control_SetTargets(3.5f, 3.5f); view = tick(10, delta, delta);
+            assert(view.raw_l == delta && view.raw_r == delta);
+            if (i >= 9) assert(view.speed_l == 3.5f && view.speed_r == 3.5f);
+        }
+        assert(view.position_l == 70 && view.position_r == 70);
+        Control_Stop(); Control_SetRPMFeedback(0);
+        view = tick(10, 8, 8);
+        assert(view.speed_l == 1 && view.speed_r == 1);
+    } else if (!strcmp(argv[1], "rpm_feedback_guard")) {
+        Control_SetRPMFeedback(1);
+        assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
+        Control_ClearFault(); test_mode = 1;
+        Control_SetTargets(1, 1); tick(10, 0, 0);
+        Control_SetRPMFeedback(1);
+        assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY && TIM3->CCR3 == 0);
+    } else if (!strcmp(argv[1], "jog_output")) {
         test_mode = 1;
         Control_SetJogPWM(150, 0); view = tick(10, -4, 2);
         assert(view.pwm_l == 150 && view.pwm_r == 0 && view.target_l == 0);

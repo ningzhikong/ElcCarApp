@@ -75,5 +75,6 @@ void Control_SetTargets(float left, float right);
 void Control_SetJogPWM(int16_t left, int16_t right);
 void Control_SetEncoderSigns(int left, int right);
 void Control_ConfigurePI(float kp_l, float ki_l, float kp_r, float ki_r, float limit);
+void Control_SetRPMFeedback(int enabled);
 void ClosedLoop_Drive(float base, float turn, int16_t actual_l, int16_t actual_r);
 #endif
