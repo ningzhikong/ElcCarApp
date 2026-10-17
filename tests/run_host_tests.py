@@ -9,7 +9,8 @@ SCENARIOS = ('math', 'validation', 'cancel_pending', 'complete', 'heartbeat',
              'direction', 'stall', 'stop_key', 'uart_fault', 'frame', 'overflow', 'slow_motion', 'arm_expiry', 'pending_expiry',
              'low_stall20', 'low_stall50', 'low_stall79', 'no_motion', 'sparse_motion',
              'jog_validation', 'jog_cancel', 'jog_expiry', 'jog_complete', 'jog_key',
-             'jog_uart', 'jog_speed', 'jog_control_fault', 'jog_stop', 'rpm_profile', 'rpm_validation', 'rpm_hold')
+             'jog_uart', 'jog_speed', 'jog_control_fault', 'jog_stop', 'rpm_profile', 'rpm_validation', 'rpm_hold',
+             'drive_profile', 'drive_step', 'drive_validation', 'drive_cancel')
 
 
 if __name__ == '__main__':
@@ -34,7 +35,9 @@ if __name__ == '__main__':
     engine_scenarios = ('sampling', 'stale', 'timing', 'stop', 'test_zero', 'cycle_wrap', 'invalid_target',
                         'sign_change', 'invalid_gains', 'fractional_limit',
                         'oled_busy', 'oled_race', 'oled_frame', 'oled_error', 'quiet', 'motor_polarity',
-                        'jog_output', 'jog_invalid', 'rpm_feedback', 'rpm_feedback_guard', 'rpm_feedback_slow')
+                        'jog_output', 'jog_invalid', 'rpm_feedback', 'rpm_feedback_guard', 'rpm_feedback_slow',
+                        'drive_rpm', 'drive_windows', 'drive_invalid', 'drive_unconfigured', 'drive_reconfigure',
+                        'drive_stall', 'drive_direction', 'drive_speed', 'drive_stale', 'drive_timing', 'drive_sparse')
     for scenario in engine_scenarios:
         subprocess.run([str(engine), scenario], check=True)
     tuned = output / 'tuned_profile_tests.exe'
@@ -52,7 +55,7 @@ if __name__ == '__main__':
                     str(ROOT / 'tests/test_fsm.c'), '-lm', '-o', str(route)], check=True)
     route_scenarios = ('vision_default', 'vision_noise', 'marker', 'initial_marker', 'half_counts', 'lap', 'two_laps', 'short_lap', 'counter_wrap', 'acbd', 'line',
                        'imu_init', 'imu_calibration', 'imu_read', 'imu_gap', 'adc', 'lost_line',
-                       'timeout0', 'timeout1', 'timeout2', 'timeout3', 'control_fault', 'ack_motion', 'manual_stop')
+                       'timeout0', 'timeout1', 'timeout2', 'timeout3', 'control_fault', 'ack_motion', 'manual_stop', 'rpm_units')
     for scenario in route_scenarios:
         subprocess.run([str(route), scenario], check=True)
     mpu = output / 'mpu_tests.exe'

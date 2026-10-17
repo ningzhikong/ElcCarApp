@@ -177,8 +177,12 @@ class Board:
                 raise RuntimeError('Drive cancelled, but encoder motion did not settle')
             time.sleep(.1)
 
-    def run(self, args, experiment_id=1, wheel_cpr=None, hold=False):
+    def run(self, args, experiment_id=1, wheel_cpr=None, hold=False, drive=False):
         validate_parameters(args)
+        if drive and (wheel_cpr is None or args.peak > 20 or args.pwm_limit != 150 or
+                      [args.kp_left, args.ki_left, args.kp_right, args.ki_right] != [2., 1., 2., 1.] or
+                      (args.sign_left, args.sign_right) != (1, 1)):
+            raise ValueError('Normal RPM drive requires its fixed configuration and calibration')
         if hold and wheel_cpr is None:
             raise ValueError('RPM hold requires wheel calibration')
         if type(experiment_id) is not int or not 1 <= experiment_id <= 1000000000:
@@ -207,15 +211,19 @@ class Board:
             self.send('RPMINFO')
             if self.read() != 'RPMINFO ELC_RPM_PI_ADAPTIVE_V1':
                 raise RuntimeError('RPM feedback estimator does not match firmware')
+        if drive:
+            self.send('DRIVEINFO')
+            if self.read() != 'DRIVEINFO ELC_DRIVE_RPM_V1 2.000000 1.000000 2.000000 1.000000 20.0000 150 1 1':
+                raise RuntimeError('Normal RPM drive configuration does not match firmware')
         self.wait_stopped()
         self.send(f'ARM {args.sign_left} {args.sign_right}')
         if self.read() != f'ARMED {args.sign_left} {args.sign_right}':
             raise RuntimeError('ARM was not confirmed')
         gains = [round(g, 6) for g in (args.kp_left, args.ki_left, args.kp_right, args.ki_right)]
-        mode = 'HOLDRPM' if hold else ('RUNRPM' if wheel_cpr is not None else 'RUN')
+        mode = ('DRIVERPM' if hold else 'DRIVESTEP') if drive else ('HOLDRPM' if hold else ('RUNRPM' if wheel_cpr is not None else 'RUN'))
         self.send(f'{mode} {experiment_id} ' + ' '.join(f'{g:.6f}' for g in gains) + f' {args.peak:.4f} {args.pwm_limit}')
         ack = self.read().split()
-        expected_ack = 'HOLDACK' if hold else ('RPMACK' if wheel_cpr is not None else 'ACK')
+        expected_ack = ('DRIVEACK' if hold else 'DRIVESTEPACK') if drive else ('HOLDACK' if hold else ('RPMACK' if wheel_cpr is not None else 'ACK'))
         if len(ack) != 8 or ack[:2] != [expected_ack, str(experiment_id)]:
             raise ValueError('Invalid applied-parameter ACK')
         values = list(map(float, ack[2:]))

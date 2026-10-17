@@ -4,6 +4,7 @@
 #endif
 #include "autotune.h"
 #include "wheel_calibration.h"
+#include "drive_config.h"
 #include <string.h>
 
 Speed_PID_t pid_L, pid_R;
@@ -13,7 +14,9 @@ static uint16_t previous_l, previous_r;
 static float filtered_l, filtered_r;
 static EncoderWindow window_l, window_r;
 static uint8_t rpm_feedback;
-static unsigned rpm_window_ticks = 10u;
+static unsigned rpm_window_l = 10u, rpm_window_r = 10u;
+static uint8_t drive_rpm;
+static uint32_t stall_l, stall_r, no_motion_l, no_motion_r, wrong_ticks;
 static float requested_l, requested_r;
 static int encoder_sign_l = CAR_ENCODER_SIGN_LEFT, encoder_sign_r = CAR_ENCODER_SIGN_RIGHT;
 static volatile uint8_t drive_enabled;
@@ -104,6 +107,7 @@ void Control_Stop(void)
     uint32_t saved = lock();
     drive_enabled = 0u;
     jog_enabled = 0u;
+    stall_l = stall_r = no_motion_l = no_motion_r = wrong_ticks = 0u;
     requested_l = requested_r = 0.0f;
     PID_Reset(&pid_L);
     PID_Reset(&pid_R);
@@ -169,6 +173,7 @@ void Control_ConfigurePI(float kp_l, float ki_l, float kp_r, float ki_r, float l
         return;
     }
     Control_Stop();
+    drive_rpm = rpm_feedback = 0u;
     pid_L.kp = kp_l; pid_L.ki = ki_l; pid_L.kd = 0.0f;
     pid_R.kp = kp_r; pid_R.ki = ki_r; pid_R.kd = 0.0f;
     pid_L.max_output = pid_R.max_output = limit;
@@ -209,9 +214,17 @@ void Control_SetTargets(float left, float right)
         return;
     }
     if (current.fault == CONTROL_FAULT_NONE) {
+        if (drive_rpm && !(left >= 0.0f && left <= Wheel_RPMToCounts(CAR_DRIVE_MAX_RPM, CAR_WHEEL_CPR_LEFT) &&
+                           right >= 0.0f && right <= Wheel_RPMToCounts(CAR_DRIVE_MAX_RPM, CAR_WHEEL_CPR_RIGHT))) {
+            Control_LatchFault(CONTROL_FAULT_EMERGENCY);
+            __set_PRIMASK(saved);
+            return;
+        }
         jog_enabled = 0u;
         if (rpm_feedback && left > 0.0f)
-            rpm_window_ticks = Wheel_RPMWindowTicks(left * 6000.0f / CAR_WHEEL_CPR_LEFT);
+            rpm_window_l = Wheel_RPMWindowTicks(Wheel_CountsToRPM(left, CAR_WHEEL_CPR_LEFT));
+        if (rpm_feedback && right > 0.0f)
+            rpm_window_r = Wheel_RPMWindowTicks(Wheel_CountsToRPM(right, CAR_WHEEL_CPR_RIGHT));
         requested_l = left;
         requested_r = right;
         target_tick = HAL_GetTick();
@@ -223,16 +236,82 @@ void Control_SetTargets(float left, float right)
 void Control_SetRPMFeedback(int enabled)
 {
     uint32_t saved = lock();
-    if (drive_enabled || (enabled && !Autotune_IsEnabled())) {
+    if (drive_enabled || (enabled && !Autotune_IsEnabled() && !drive_rpm) || (drive_rpm && !enabled)) {
         Control_LatchFault(CONTROL_FAULT_EMERGENCY);
     } else {
         rpm_feedback = enabled != 0;
-        rpm_window_ticks = 10u;
+        rpm_window_l = rpm_window_r = 10u;
         Encoder_WindowReset(&window_l); Encoder_WindowReset(&window_r);
         filtered_l = filtered_r = 0.0f;
         current.speed_l = current.speed_r = 0.0f;
     }
     __set_PRIMASK(saved);
+}
+
+void Control_ConfigureDriveRPM(void)
+{
+    uint32_t saved = lock();
+#if CAR_TUNED_PI_ENABLED
+    /* An exported counts/IIR profile has a different control contract. */
+    Control_LatchFault(CONTROL_FAULT_EMERGENCY);
+#else
+    if (drive_enabled) Control_LatchFault(CONTROL_FAULT_EMERGENCY);
+    else {
+        Control_ConfigurePI(CAR_DRIVE_KP_LEFT, CAR_DRIVE_KI_LEFT,
+                            CAR_DRIVE_KP_RIGHT, CAR_DRIVE_KI_RIGHT, CAR_DRIVE_PWM_LIMIT);
+        drive_rpm = 1u;
+        Control_SetRPMFeedback(1);
+    }
+#endif
+    __set_PRIMASK(saved);
+}
+
+void Control_SetWheelRPM(float left, float right)
+{
+    uint32_t saved = lock();
+    if (!drive_rpm || !(left >= 0.0f && left <= CAR_DRIVE_MAX_RPM &&
+                        right >= 0.0f && right <= CAR_DRIVE_MAX_RPM))
+        Control_LatchFault(CONTROL_FAULT_EMERGENCY);
+    else Control_SetTargets(Wheel_RPMToCounts(left, CAR_WHEEL_CPR_LEFT),
+                            Wheel_RPMToCounts(right, CAR_WHEEL_CPR_RIGHT));
+    __set_PRIMASK(saved);
+}
+
+void Control_DriveRPM(float base, float turn)
+{
+    float left, right, peak;
+    if (!(base >= 0.0f && base <= CAR_DRIVE_MAX_RPM && turn >= -CAR_DRIVE_MAX_RPM && turn <= CAR_DRIVE_MAX_RPM)) {
+        Control_LatchFault(CONTROL_FAULT_EMERGENCY);
+        return;
+    }
+    if (base == 0.0f) { Control_SetWheelRPM(0.0f, 0.0f); return; }
+    left = base - turn; right = base + turn;
+    if (left < 0.0f) left = 0.0f;
+    if (right < 0.0f) right = 0.0f;
+    peak = left > right ? left : right;
+    if (peak > CAR_DRIVE_MAX_RPM) {
+        left *= CAR_DRIVE_MAX_RPM / peak; right *= CAR_DRIVE_MAX_RPM / peak;
+        if (left > CAR_DRIVE_MAX_RPM) left = CAR_DRIVE_MAX_RPM;
+        if (right > CAR_DRIVE_MAX_RPM) right = CAR_DRIVE_MAX_RPM;
+    }
+    Control_SetWheelRPM(left, right);
+}
+
+static void check_drive_feedback(void)
+{
+    float threshold = CAR_DRIVE_PWM_LIMIT < 80u ? CAR_DRIVE_PWM_LIMIT * 0.8f : 80.0f;
+    if (current.raw_l > 100 || current.raw_l < -100 || current.raw_r > 100 || current.raw_r < -100) {
+        Control_LatchFault(CONTROL_FAULT_SPEED); return;
+    }
+    if ((requested_l > 0.0f && current.raw_l < -2) || (requested_r > 0.0f && current.raw_r < -2)) ++wrong_ticks;
+    else wrong_ticks = 0u;
+    if (wrong_ticks >= 3u) { Control_LatchFault(CONTROL_FAULT_DIRECTION); return; }
+    stall_l = requested_l > 0.0f && current.pwm_l >= threshold && current.raw_l == 0 ? stall_l + 1u : 0u;
+    stall_r = requested_r > 0.0f && current.pwm_r >= threshold && current.raw_r == 0 ? stall_r + 1u : 0u;
+    no_motion_l = requested_l > 0.0f && current.raw_l <= 0 ? no_motion_l + 1u : 0u;
+    no_motion_r = requested_r > 0.0f && current.raw_r <= 0 ? no_motion_r + 1u : 0u;
+    if (stall_l >= 50u || stall_r >= 50u || no_motion_l >= 100u || no_motion_r >= 100u)
+        Control_LatchFault(CONTROL_FAULT_STALL);
 }
 
 void ClosedLoop_Drive(float base, float turn, int16_t actual_l, int16_t actual_r)
@@ -302,8 +381,8 @@ void Control_TimerIRQ(void)
     /* Unsigned arithmetic gives defined wrap; consumers use modular deltas. */
     current.position_l = (int32_t)((uint32_t)current.position_l + (uint32_t)current.raw_l);
     current.position_r = (int32_t)((uint32_t)current.position_r + (uint32_t)current.raw_r);
-    filtered_l = rpm_feedback ? Encoder_WindowStep(&window_l, current.raw_l, rpm_window_ticks) : Encoder_Filter(filtered_l, current.raw_l);
-    filtered_r = rpm_feedback ? Encoder_WindowStep(&window_r, current.raw_r, rpm_window_ticks) : Encoder_Filter(filtered_r, current.raw_r);
+    filtered_l = rpm_feedback ? Encoder_WindowStep(&window_l, current.raw_l, rpm_window_l) : Encoder_Filter(filtered_l, current.raw_l);
+    filtered_r = rpm_feedback ? Encoder_WindowStep(&window_r, current.raw_r, rpm_window_r) : Encoder_Filter(filtered_r, current.raw_r);
     current.speed_l = filtered_l;
     current.speed_r = filtered_r;
     current.tick_ms = now;
@@ -314,15 +393,18 @@ void Control_TimerIRQ(void)
     if (Autotune_IsEnabled()) Autotune_BeforeControl(now);
     if (drive_enabled && now - target_tick > 100u)
         Control_LatchFault(CONTROL_FAULT_STALE_TARGET);
+    if (drive_enabled && drive_rpm && current.fault == CONTROL_FAULT_NONE) check_drive_feedback();
     current.target_l = requested_l;
     current.target_r = requested_r;
     if (drive_enabled && current.fault == CONTROL_FAULT_NONE) {
         out_l = jog_enabled ? (float)jog_l : PID_Incremental_Calc(&pid_L, requested_l, filtered_l);
         out_r = jog_enabled ? (float)jog_r : PID_Incremental_Calc(&pid_R, requested_r, filtered_r);
         /* Bench/tuned PI is forward only; zero target cancels PWM. */
-        if (!jog_enabled && (Autotune_IsEnabled() || CAR_TUNED_PI_ENABLED)) {
+        if (!jog_enabled && (Autotune_IsEnabled() || CAR_TUNED_PI_ENABLED || drive_rpm)) {
             if (out_l < 0.0f || requested_l == 0.0f) out_l = pid_L.output = 0.0f;
             if (out_r < 0.0f || requested_r == 0.0f) out_r = pid_R.output = 0.0f;
+            if (drive_rpm && requested_l == 0.0f) PID_Reset(&pid_L);
+            if (drive_rpm && requested_r == 0.0f) PID_Reset(&pid_R);
         }
         Motor_SetPWM((int16_t)out_l, (int16_t)out_r);
         current.pwm_l = (float)(int16_t)out_l;

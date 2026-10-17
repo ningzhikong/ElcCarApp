@@ -51,6 +51,9 @@
 #define CONTROL_FAULT_STALE_TARGET 2u
 #define CONTROL_FAULT_UART 3u
 #define CONTROL_FAULT_EMERGENCY 4u
+#define CONTROL_FAULT_STALL 5u
+#define CONTROL_FAULT_DIRECTION 6u
+#define CONTROL_FAULT_SPEED 7u
 
 typedef struct {
     uint32_t tick_ms, period_us, late_ticks, fault, quiet_ticks;
@@ -76,5 +79,10 @@ void Control_SetJogPWM(int16_t left, int16_t right);
 void Control_SetEncoderSigns(int left, int right);
 void Control_ConfigurePI(float kp_l, float ki_l, float kp_r, float ki_r, float limit);
 void Control_SetRPMFeedback(int enabled);
+/* Select the bounded normal-drive controller while stopped. Legacy IIR
+ * tuning profiles cannot be applied to this RPM controller. */
+void Control_ConfigureDriveRPM(void);
+void Control_SetWheelRPM(float left_rpm, float right_rpm);
+void Control_DriveRPM(float base_rpm, float turn_rpm);
 void ClosedLoop_Drive(float base, float turn, int16_t actual_l, int16_t actual_r);
 #endif

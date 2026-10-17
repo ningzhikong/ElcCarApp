@@ -12,6 +12,10 @@ static inline float Wheel_RPMToCounts(float rpm, unsigned cpr)
 {
     return rpm * (float)cpr / 6000.0f;
 }
+static inline float Wheel_CountsToRPM(float counts, unsigned cpr)
+{
+    return counts * 6000.0f / (float)cpr;
+}
 /* Average roughly 1/30 of a wheel revolution, bounded to 80..250ms.
  * 20 RPM -> 10 ticks; 10 RPM -> 20 ticks. Retain the 10ms control rate. */
 static inline unsigned Wheel_RPMWindowTicks(float rpm)

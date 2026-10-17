@@ -68,6 +68,7 @@ def main():
     parser.add_argument('--port', required=True)
     parser.add_argument('--build-id', required=True)
     parser.add_argument('--rpm', type=float, default=20.)
+    parser.add_argument('--drive', action='store_true', help='Exercise fixed normal-drive RPM configuration/path')
     parser.add_argument('--hold', action=argparse.BooleanOptionalAction, default=True,
                         help='Hold RPM for 4s (default); --no-hold selects speed steps')
     parser.add_argument('--cpr-left', type=int, default=1080)
@@ -86,6 +87,10 @@ def main():
         parser.error('Expected a 16-character firmware build ID')
     try:
         bench.validate_parameters(args)
+        if args.drive and (args.peak > 20 or args.pwm_limit != 150 or
+                           [args.kp_left, args.ki_left, args.kp_right, args.ki_right] != [2., 1., 2., 1.] or
+                           (args.sign_left, args.sign_right) != (1, 1)):
+            raise ValueError('Normal drive check must use compiled-in configuration')
         if any(not 0 < c <= 1000000 or not 1 <= args.peak * c / 6000 <= 25
                for c in (args.cpr_left, args.cpr_right)):
             raise ValueError('RPM conversion exceeds encoder bench bounds')
@@ -99,12 +104,14 @@ def main():
               'rpm': args.peak, 'pwm_limit': args.pwm_limit,
               'gains': [args.kp_left, args.ki_left, args.kp_right, args.ki_right],
               'cpr': [args.cpr_left, args.cpr_right]}
+    if args.drive:
+        result.update(source='normal_drive_rpm_check', drive_controller='ELC_DRIVE_RPM_V1')
     (folder / 'request.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
     board = None
     try:
         board = bench.Board(args.port, folder)
         board.firmware_info = ('ELC_INC_PI_V1', args.build_id)
-        rows = board.run(args, wheel_cpr=(args.cpr_left, args.cpr_right), hold=args.hold)
+        rows = board.run(args, wheel_cpr=(args.cpr_left, args.cpr_right), hold=args.hold, drive=args.drive)
         with (folder / 'trace.csv').open('w', newline='', encoding='utf-8') as stream:
             writer = csv.writer(stream)
             writer.writerow(bench.FIELDS)

@@ -59,6 +59,12 @@ void Control_SetTargets(float l, float r)
     measured.pwm_l = l > 0.0f ? pwm_cap * pwm_fraction : 0.0f;
     measured.pwm_r = r > 0.0f ? pwm_cap * pwm_fraction : 0.0f;
 }
+void Control_ConfigureDriveRPM(void) { ++configured; pwm_cap = 150u; Control_Stop(); }
+void Control_DriveRPM(float base, float turn)
+{
+    assert(turn == 0 && base >= 0 && base <= 20);
+    Control_SetTargets(Wheel_RPMToCounts(base, CAR_WHEEL_CPR_LEFT), Wheel_RPMToCounts(base, CAR_WHEEL_CPR_RIGHT));
+}
 void Control_SetJogPWM(int16_t l, int16_t r)
 {
     assert(abs(l) <= 150 && abs(r) <= 150 && !(l && r));
@@ -176,7 +182,34 @@ int main(int argc, char **argv)
     Autotune_Init();
     exchange("HELLO\n", "HELLO ELC_AUTOTUNE_V1 INC_PI_COUNTS_10MS 10 50 5500\n");
     exchange("INFO\n", "INFO ELC_INC_PI_V1 ");
-    if (!strcmp(argv[1], "rpm_profile") || !strcmp(argv[1], "rpm_hold")) {
+    if (!strcmp(argv[1], "drive_profile") || !strcmp(argv[1], "drive_step") || !strcmp(argv[1], "drive_cancel")) {
+        int hold = strcmp(argv[1], "drive_step") != 0;
+        exchange("DRIVEINFO\n", "DRIVEINFO ELC_DRIVE_RPM_V1 2.000000 1.000000 2.000000 1.000000 20.0000 150 1 1\n");
+        arm(); clear_output();
+        feed(hold ? "DRIVERPM 7 2 1 2 1 20 150\n" : "DRIVESTEP 7 2 1 2 1 20 150\n");
+        assert(configured == 0);
+        if (!strcmp(argv[1], "drive_cancel")) {
+            feed("STOP\n"); tick(0);
+            assert(configured == 0 && measured.pwm_l == 0);
+        } else {
+            for (unsigned i = 0; i <= 550; ++i) {
+                if (i % 10 == 0) feed("PING\n");
+                tick(i ? 3 : 0); Autotune_Poll();
+                if (i == 0) assert(strstr(output, hold ? "DRIVEACK 7" : "DRIVESTEPACK 7"));
+                if (i == 50) assert(fabsf(measured.target_l - (hold ? 3.6f : 1.44f)) < .00001f);
+                if (i == 150) assert(fabsf(measured.target_r - 4.4f) < .00001f);
+                if (i == 450) assert(measured.pwm_l == 0 && measured.pwm_r == 0);
+            }
+            exchange("STATUS\n", "STATUS 7 2 0 111 5500 0");
+            assert(configured == 1);
+        }
+    } else if (!strcmp(argv[1], "drive_validation")) {
+        arm();
+        exchange("DRIVERPM 7 2 .8 2 1 20 150\n", "ERR DRIVE_PROFILE");
+        exchange("DRIVERPM 7 2 1 2 1 21 150\n", "ERR DRIVE_PROFILE");
+        exchange("DRIVESTEP 7 2 1 2 1 20 100\n", "ERR DRIVE_PROFILE");
+        assert(configured == 0 && measured.pwm_l == 0);
+    } else if (!strcmp(argv[1], "rpm_profile") || !strcmp(argv[1], "rpm_hold")) {
         int hold = !strcmp(argv[1], "rpm_hold");
         exchange("CAL\n", "CAL MANUAL_REF_V1 1080 1320\n");
         exchange("RPMINFO\n", "RPMINFO ELC_RPM_PI_ADAPTIVE_V1\n");

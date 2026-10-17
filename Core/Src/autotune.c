@@ -1,6 +1,7 @@
 #include "autotune.h"
 #include "serial_router.h"
 #include "wheel_calibration.h"
+#include "drive_config.h"
 #ifndef CAR_HOST_TEST
 #include "usart.h"
 #endif
@@ -146,11 +147,15 @@ void Autotune_BeforeControl(uint32_t now_ms)
         fault = 0u;
         start_tick = heartbeat_tick = now_ms;
         if (!jog_active) {
-            Control_ConfigurePI(active.kp_l, active.ki_l, active.kp_r, active.ki_r, active.limit);
-            Control_SetRPMFeedback(active.rpm_mode);
+            if (active.rpm_mode == 2u) Control_ConfigureDriveRPM();
+            else {
+                Control_ConfigurePI(active.kp_l, active.ki_l, active.kp_r, active.ki_r, active.limit);
+                Control_SetRPMFeedback(active.rpm_mode);
+            }
         }
         state = STATE_RUN;
-        ack_pending = jog_active ? 2u : (active.hold_mode ? 4u : (active.rpm_mode ? 3u : 1u));
+        ack_pending = jog_active ? 2u : (active.rpm_mode == 2u ? (active.hold_mode ? 5u : 6u) :
+                                       (active.hold_mode ? 4u : (active.rpm_mode ? 3u : 1u)));
     }
     if (state != STATE_RUN) return;
     elapsed = now_ms - start_tick;
@@ -163,7 +168,8 @@ void Autotune_BeforeControl(uint32_t now_ms)
     else if (jog_active) Control_SetJogPWM(jog_l, jog_r);
     else {
         float target = target_at(elapsed);
-        Control_SetTargets(active.rpm_mode ? Wheel_RPMToCounts(target, CAR_WHEEL_CPR_LEFT) : target,
+        if (active.rpm_mode == 2u) Control_DriveRPM(target, 0.0f);
+        else Control_SetTargets(active.rpm_mode ? Wheel_RPMToCounts(target, CAR_WHEEL_CPR_LEFT) : target,
                            active.rpm_mode ? Wheel_RPMToCounts(target, CAR_WHEEL_CPR_RIGHT) : target);
     }
 }
@@ -291,6 +297,12 @@ static void command(char *line)
         send_text(out);
     } else if (n == 1u && !strcmp(tokens[0], "RPMINFO")) {
         send_text("RPMINFO ELC_RPM_PI_ADAPTIVE_V1\n");
+    } else if (n == 1u && !strcmp(tokens[0], "DRIVEINFO")) {
+        snprintf(out, sizeof out, "DRIVEINFO ELC_DRIVE_RPM_V1 %.6f %.6f %.6f %.6f %.4f %u %d %d\n",
+            (double)CAR_DRIVE_KP_LEFT, (double)CAR_DRIVE_KI_LEFT,
+            (double)CAR_DRIVE_KP_RIGHT, (double)CAR_DRIVE_KI_RIGHT,
+            (double)CAR_DRIVE_MAX_RPM, CAR_DRIVE_PWM_LIMIT, CAR_ENCODER_SIGN_LEFT, CAR_ENCODER_SIGN_RIGHT);
+        send_text(out);
     } else if (n == 1u && !strcmp(tokens[0], "CAL")) {
         snprintf(out, sizeof out, "CAL MANUAL_REF_V1 %u %u\n",
             CAR_WHEEL_CPR_LEFT, CAR_WHEEL_CPR_RIGHT);
@@ -343,9 +355,11 @@ static void command(char *line)
         pending_run = 2u;
         __set_PRIMASK(saved);
     } else if (n == 8u && (!strcmp(tokens[0], "RUN") || !strcmp(tokens[0], "RUNRPM") ||
-                           !strcmp(tokens[0], "HOLDRPM"))) {
-        config.hold_mode = !strcmp(tokens[0], "HOLDRPM");
-        config.rpm_mode = config.hold_mode || !strcmp(tokens[0], "RUNRPM");
+                           !strcmp(tokens[0], "HOLDRPM") || !strcmp(tokens[0], "DRIVERPM") ||
+                           !strcmp(tokens[0], "DRIVESTEP"))) {
+        config.hold_mode = !strcmp(tokens[0], "HOLDRPM") || !strcmp(tokens[0], "DRIVERPM");
+        config.rpm_mode = !strcmp(tokens[0], "DRIVERPM") || !strcmp(tokens[0], "DRIVESTEP") ? 2u :
+                          (config.hold_mode || !strcmp(tokens[0], "RUNRPM"));
         if (!request_id(tokens[1], &config.id) ||
             !number(tokens[2], 0.0f, 10.0f, &config.kp_l) ||
             !number(tokens[3], 0.0f, 2.0f, &config.ki_l) ||
@@ -362,6 +376,11 @@ static void command(char *line)
              !(Wheel_RPMToCounts(config.peak, CAR_WHEEL_CPR_RIGHT) >= 1.0f &&
                Wheel_RPMToCounts(config.peak, CAR_WHEEL_CPR_RIGHT) <= 25.0f))) {
             send_text("ERR RPM\n"); return;
+        }
+        if (config.rpm_mode == 2u && (config.kp_l != CAR_DRIVE_KP_LEFT || config.ki_l != CAR_DRIVE_KI_LEFT ||
+            config.kp_r != CAR_DRIVE_KP_RIGHT || config.ki_r != CAR_DRIVE_KI_RIGHT ||
+            config.limit != CAR_DRIVE_PWM_LIMIT || config.peak > CAR_DRIVE_MAX_RPM)) {
+            send_text("ERR DRIVE_PROFILE\n"); return;
         }
         saved = lock();
         if (!armed || state == STATE_RUN || pending_run || quiet_ticks < 30u ||
@@ -432,7 +451,8 @@ void Autotune_Poll(void)
                 (unsigned long)applied_ms);
         } else {
         snprintf(out, sizeof out, "%s %lu %.6f %.6f %.6f %.6f %.4f %.0f\n",
-            ack_kind == 4u ? "HOLDACK" : (ack_kind == 3u ? "RPMACK" : "ACK"), (unsigned long)applied.id,
+            ack_kind == 6u ? "DRIVESTEPACK" : (ack_kind == 5u ? "DRIVEACK" :
+            (ack_kind == 4u ? "HOLDACK" : (ack_kind == 3u ? "RPMACK" : "ACK"))), (unsigned long)applied.id,
             (double)applied.kp_l, (double)applied.ki_l,
             (double)applied.kp_r, (double)applied.ki_r,
             (double)applied.peak, (double)applied.limit);

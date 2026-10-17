@@ -9,11 +9,13 @@
 #define ROUTE_PHASE_TIMEOUT_MS 10000u
 #define ROUTE_LINE_LOST_MS 400u
 #define ROUTE_IMU_MAX_GAP_MS 50u
-#define ROUTE_ABCD_SPEED 10.0f
-#define ROUTE_ACBD_SPEED 25.0f
-#define ROUTE_LINE_KP 22.0f
-#define ROUTE_LINE_KD 8.0f
-#define ROUTE_HEADING_KP 22.0f
-#define ROUTE_HEADING_KD 8.0f
-#define ROUTE_MAX_TURN 18.0f
+/* RPM at the wheel output. Conservative commissioning values; steering
+ * gains now produce RPM, and still require track/load validation. */
+#define ROUTE_ABCD_RPM 10.0f
+#define ROUTE_ACBD_RPM 10.0f
+#define ROUTE_LINE_KP 4.0f
+#define ROUTE_LINE_KD 1.5f
+#define ROUTE_HEADING_KP 4.0f
+#define ROUTE_HEADING_KD 1.5f
+#define ROUTE_MAX_TURN_RPM 8.0f
 #endif

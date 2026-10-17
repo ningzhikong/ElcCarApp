@@ -21,7 +21,7 @@ extern ACBD_SubPhase_t g_acbd_phase;
 extern volatile FSM_Fault_t g_fsm_fault;
 extern volatile uint8_t g_target_laps, g_current_laps;
 extern volatile VisionColor_t g_vision_color;
-extern volatile int16_t speed_L, speed_R;
+extern volatile float speed_L, speed_R; /* Wheel RPM. */
 void Car_System_Init(void);
 void FSM_KeyScan(void);
 void FSM_Timer1s_Tick(void);

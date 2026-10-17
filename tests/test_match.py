@@ -33,6 +33,34 @@ class FakeBoard(bench.Board):
 
 
 class MatchTests(unittest.TestCase):
+    def test_normal_drive_contract_and_distinct_ack(self):
+        for hold, ack, mode in ((True, 'DRIVEACK', 'DRIVERPM'), (False, 'DRIVESTEPACK', 'DRIVESTEP')):
+            board = FakeBoard('CAL MANUAL_REF_V1 1080 1320')
+            board.replies += ['RPMINFO ELC_RPM_PI_ADAPTIVE_V1',
+                              'DRIVEINFO ELC_DRIVE_RPM_V1 2.000000 1.000000 2.000000 1.000000 20.0000 150 1 1',
+                              'STOPPED', 'STATUS 0 3 0 0 0 0 1', 'ARMED 1 1',
+                              f'{ack} 1 2.000000 1.000000 2.000000 1.000000 20.0000 150',
+                              'STATUS 1 2 0 111 5500 0 0', 'BEGIN 1 111',
+                              *[','.join(map(str, row)) for row in trace(hold=hold)], 'END']
+            args = SimpleNamespace(sign_left=1, sign_right=1, kp_left=2., ki_left=1.,
+                                   kp_right=2., ki_right=1., peak=20., pwm_limit=150)
+            self.assertEqual(len(board.run(args, wheel_cpr=(1080, 1320), hold=hold, drive=True)), 111)
+            self.assertTrue(any(c.startswith(mode + ' ') for c in board.sent))
+
+    def test_normal_drive_mismatch_never_arms(self):
+        args = SimpleNamespace(sign_left=1, sign_right=1, kp_left=2., ki_left=1.,
+                               kp_right=2., ki_right=1., peak=20., pwm_limit=150)
+        board = FakeBoard('CAL MANUAL_REF_V1 1080 1320')
+        board.replies += ['RPMINFO ELC_RPM_PI_ADAPTIVE_V1', 'DRIVEINFO OTHER_CONFIG']
+        with self.assertRaisesRegex(RuntimeError, 'configuration'):
+            board.run(args, wheel_cpr=(1080, 1320), hold=True, drive=True)
+        self.assertFalse(any(c.startswith(('ARM', 'DRIVERPM')) for c in board.sent))
+        args.ki_right = .8
+        board = FakeBoard('unused')
+        with self.assertRaises(ValueError):
+            board.run(args, wheel_cpr=(1080, 1320), hold=True, drive=True)
+        self.assertEqual(board.sent, [])
+
     def test_hold_and_step_profiles_cannot_be_confused(self):
         result = match.evaluate(trace(hold=True), 20, 150, (1080, 1320), hold=True)
         self.assertTrue(result['matched_and_smooth'])

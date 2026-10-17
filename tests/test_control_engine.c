@@ -102,10 +102,76 @@ int main(int argc, char **argv)
         Control_SetTargets(0, 0); view = tick(10, -2, 2);
         assert(view.pwm_l == 0 && view.pwm_r == 0);
         Control_SetTargets(-1, 1); assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
+        Control_ClearFault(); Control_ConfigureDriveRPM();
+        assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY); /* Reject the legacy estimator profile. */
         puts("control_tuned_profile: PASS"); return 0;
     }
 #endif
-    if (!strcmp(argv[1], "rpm_feedback_slow")) {
+    if (!strcmp(argv[1], "drive_rpm")) {
+        Control_ConfigureDriveRPM();
+        assert(pid_L.kp == 2 && pid_L.ki == 1 && pid_R.ki == 1 && pid_L.kd == 0);
+        assert(pid_L.max_output == 150 && pid_R.max_output == 150);
+        Control_DriveRPM(10, 0); view = tick(10, 2, 2);
+        assert(fabsf(view.target_l - 1.8f) < .00001f && fabsf(view.target_r - 2.2f) < .00001f);
+        Control_DriveRPM(15, 10); view = tick(10, 2, 2);
+        assert(fabsf(view.target_l - .72f) < .00001f && fabsf(view.target_r - 4.4f) < .00001f);
+        Control_DriveRPM(0, 10); view = tick(10, 5, 5);
+        assert(view.pwm_l == 0 && view.pwm_r == 0 && pid_L.err_last == 0);
+        Control_Stop(); Control_ConfigurePI(2, 1, 2, 1, 150);
+        Control_SetTargets(10, 10); view = tick(10, 0, 0);
+        assert(view.fault == 0 && view.target_l == 10); /* Legacy bench contract remains separate. */
+    } else if (!strcmp(argv[1], "drive_windows")) {
+        Control_ConfigureDriveRPM();
+        for (unsigned i = 0; i < 80; ++i) {
+            Control_SetWheelRPM(10, 20);
+            view = tick(10, i % 20 < 7 ? 5 : 0, i % 10 < 7 ? 5 : 0);
+            if (i >= 19) assert(view.speed_l == 1.75f && view.speed_r == 3.5f);
+            assert(view.fault == 0 && view.pwm_l >= 0 && view.pwm_l <= 150 && view.pwm_r <= 150);
+        }
+    } else if (!strcmp(argv[1], "drive_invalid")) {
+        Control_ConfigureDriveRPM();
+        Control_SetWheelRPM(NAN, 10); assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
+        Control_ClearFault(); Control_SetWheelRPM(10, 21); assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
+        Control_ClearFault(); Control_DriveRPM(10, INFINITY); assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
+        Control_ClearFault(); Control_DriveRPM(-1, 0); assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
+        Control_ClearFault(); Control_SetTargets(10, 10); assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
+        Control_ClearFault(); Control_SetRPMFeedback(0); assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
+    } else if (!strcmp(argv[1], "drive_unconfigured")) {
+        Control_SetWheelRPM(10, 10);
+        assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY && TIM3->CCR3 == 0);
+    } else if (!strcmp(argv[1], "drive_reconfigure")) {
+        Control_ConfigureDriveRPM(); Control_SetWheelRPM(10, 10); tick(10, 1, 1);
+        Control_ConfigureDriveRPM();
+        assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY && TIM3->CCR3 == 0);
+    } else if (!strcmp(argv[1], "drive_stall")) {
+        Control_ConfigureDriveRPM();
+        for (unsigned i = 0; i < 100; ++i) { Control_SetWheelRPM(10, 10); view = tick(10, 0, 0); }
+        assert(view.fault == CONTROL_FAULT_STALL && TIM3->CCR3 == 0 && TIM3->CCR4 == 0);
+        Control_SetWheelRPM(10, 10); view = tick(10, 2, 2);
+        assert(view.fault == CONTROL_FAULT_STALL && view.pwm_l == 0);
+    } else if (!strcmp(argv[1], "drive_direction")) {
+        Control_ConfigureDriveRPM();
+        for (unsigned i = 0; i < 3; ++i) { Control_SetWheelRPM(10, 10); view = tick(10, -3, 2); }
+        assert(view.fault == CONTROL_FAULT_DIRECTION && TIM3->CCR3 == 0);
+    } else if (!strcmp(argv[1], "drive_speed")) {
+        Control_ConfigureDriveRPM(); Control_SetWheelRPM(10, 10); view = tick(10, 101, 2);
+        assert(view.fault == CONTROL_FAULT_SPEED && TIM3->CCR3 == 0);
+    } else if (!strcmp(argv[1], "drive_stale")) {
+        Control_ConfigureDriveRPM(); Control_SetWheelRPM(10, 10);
+        for (unsigned i = 0; i < 11; ++i) view = tick(10, 1, 1);
+        assert(view.fault == CONTROL_FAULT_STALE_TARGET && TIM3->CCR3 == 0);
+    } else if (!strcmp(argv[1], "drive_timing")) {
+        Control_ConfigureDriveRPM(); Control_SetWheelRPM(10, 10); view = tick(20, 1, 1);
+        assert(view.fault == CONTROL_FAULT_TIMING && TIM3->CCR3 == 0);
+    } else if (!strcmp(argv[1], "drive_sparse")) {
+        Control_ConfigureDriveRPM();
+        for (unsigned i = 0; i < 200; ++i) {
+            Control_SetWheelRPM(2, 2); view = tick(10, i % 3 == 0, i % 3 == 0);
+            assert(view.fault == 0 && view.pwm_l <= 150);
+        }
+        Control_Stop(); view = tick(10, 0, 0);
+        assert(view.pwm_l == 0 && view.target_l == 0);
+    } else if (!strcmp(argv[1], "rpm_feedback_slow")) {
         test_mode = 1; Control_SetRPMFeedback(1);
         for (unsigned i = 0; i < 60; ++i) {
             int delta = i % 20 < 7 ? 5 : 0;
@@ -120,7 +186,7 @@ int main(int argc, char **argv)
         Control_SetRPMFeedback(1);
         for (unsigned i = 0; i < 20; ++i) {
             int delta = i % 10 < 7 ? 5 : 0;
-            Control_SetTargets(3.5f, 3.5f); view = tick(10, delta, delta);
+            Control_SetTargets(3.6f, 4.4f); view = tick(10, delta, delta);
             assert(view.raw_l == delta && view.raw_r == delta);
             if (i >= 9) assert(view.speed_l == 3.5f && view.speed_r == 3.5f);
         }

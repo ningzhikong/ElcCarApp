@@ -19,7 +19,7 @@ static uint16_t gray[8];
 static unsigned mux, beeps, clears, starts;
 static int init_error, calibration_error, read_error, adc_error = -1;
 static float gyro_y, base, turn;
-static int receiving, shown_fault;
+static int receiving, shown_fault, configured_rpm, shown_rpm;
 static int calibration_motion;
 
 uint32_t HAL_GetTick(void) { return now; }
@@ -46,12 +46,13 @@ uint8_t MPU6050_CalibrateBias(I2C_HandleTypeDef *h, float *x, float *y, float *z
 uint8_t MPU6050_Read(I2C_HandleTypeDef *h, MPU6050_Data_t *d)
 { (void)h; memset(d, 0, sizeof *d); d->gy = gyro_y; return (uint8_t)read_error; }
 void Motor_Init(void) { }
+void Control_ConfigureDriveRPM(void) { ++configured_rpm; }
 void Control_Stop(void) { base = turn = 0; }
 void Control_ReadView(ControlView *v) { *v = measured; }
 void Control_ClearFault(void) { measured.fault = 0; ++clears; }
 uint32_t Control_GetFault(void) { return measured.fault; }
-void ClosedLoop_Drive(float b, float t, int16_t l, int16_t r)
-{ (void)l; (void)r; assert(b - t > 0 && b + t > 0); base = b; turn = t; }
+void Control_DriveRPM(float b, float t)
+{ assert(b == 10.0f && b - t > 0 && b + t <= 20.0f); base = b; turn = t; }
 void Serial_StartVision(void) { receiving = 1; }
 void Serial_StopVision(void) { receiving = 0; }
 int HAL_UART_Transmit(void *h, uint8_t *data, uint16_t n, uint32_t timeout)
@@ -63,7 +64,8 @@ int HAL_UART_Transmit(void *h, uint8_t *data, uint16_t n, uint32_t timeout)
 void OLED_NewFrame(void) { shown_fault = 0; }
 void OLED_ShowFrame(void) { }
 void OLED_PrintString(uint8_t x, uint8_t y, char *s, const Font *font, OLED_ColorMode color)
-{ (void)x; (void)y; (void)font; (void)color; if (strstr(s, "FAULT")) shown_fault = 1; }
+{ (void)x; (void)y; (void)font; (void)color; if (strstr(s, "FAULT")) shown_fault = 1;
+  if (!strcmp(s, "RPM 10.0 10.0")) shown_rpm = 1; }
 
 static void center(void) { memset(gray, 0, sizeof gray); gray[3] = 2900; }
 static void step_wheels(int left, int right)
@@ -109,7 +111,15 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "initial_marker"))
         for (unsigned i = 0; i < 8; ++i) gray[i] = 3500;
     Car_System_Init();
-    if (!strcmp(argv[1], "vision_default")) {
+    if (!strcmp(argv[1], "rpm_units")) {
+        assert(configured_rpm == 1 && base == 0);
+        start('R', '1'); step(1);
+        measured.speed_l = 1.8f; measured.speed_r = 2.2f;
+        FSM_ControlLoop_10ms();
+        assert(fabsf(speed_L - 10) < .0001f && fabsf(speed_R - 10) < .0001f && base == 10);
+        FSM_OLED_Update(); assert(shown_rpm);
+        press(); assert(base == 0);
+    } else if (!strcmp(argv[1], "vision_default")) {
         press(); press(); assert(g_system_state == SYS_STATE_RUN_ACBD && g_target_laps == 1);
     } else if (!strcmp(argv[1], "vision_noise")) {
         press(); const char *message = "garbage6?5r\r\n";

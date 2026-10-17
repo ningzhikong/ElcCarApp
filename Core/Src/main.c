@@ -53,7 +53,6 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-        extern volatile int16_t speed_L, speed_R;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/

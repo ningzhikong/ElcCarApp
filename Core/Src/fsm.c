@@ -11,6 +11,7 @@
 #include "control.h"
 #include "serial_router.h"
 #include "route_config.h"
+#include "wheel_calibration.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
@@ -21,7 +22,7 @@ ACBD_SubPhase_t g_acbd_phase = ACBD_TO_C;
 volatile FSM_Fault_t g_fsm_fault;
 volatile uint8_t g_target_laps = 1, g_current_laps;
 volatile VisionColor_t g_vision_color = COLOR_BLUE;
-volatile int16_t speed_L, speed_R;
+volatile float speed_L, speed_R; /* Wheel RPM, for display only. */
 static uint32_t vision_start_time, brake_start_time, phase_tick;
 static uint32_t peak_lockout_tick, beep_led_off_tick, line_seen_tick;
 static uint32_t previous_l, previous_r, yaw_tick;
@@ -103,12 +104,13 @@ static bool initialize_imu(void)
 void Car_System_Init(void)
 {
     Motor_Init();
+    Control_ConfigureDriveRPM();
     line_pid.kp = ROUTE_LINE_KP;
     line_pid.kd = ROUTE_LINE_KD;
-    line_pid.max_output = ROUTE_MAX_TURN;
+    line_pid.max_output = ROUTE_MAX_TURN_RPM;
     heading_pid.kp = ROUTE_HEADING_KP;
     heading_pid.kd = ROUTE_HEADING_KD;
-    heading_pid.max_output = ROUTE_MAX_TURN;
+    heading_pid.max_output = ROUTE_MAX_TURN_RPM;
     initialize_imu();
     Enter_Standby_State();
 }
@@ -214,7 +216,7 @@ static void drive(float base, bool heading)
                      PID_Positional_Calc(pid, 0.0f, -gray_error);
     if (turn > cap) turn = cap;
     if (turn < -cap) turn = -cap;
-    ClosedLoop_Drive(base, turn, speed_L, speed_R);
+    Control_DriveRPM(base, turn);
 }
 static void begin_run(uint32_t now)
 {
@@ -310,8 +312,8 @@ void FSM_ControlLoop_10ms(void)
     int32_t dl, dr;
     bool previous_peak = is_on_peak, heading;
     Control_ReadView(&v);
-    speed_L = (int16_t)v.speed_l;
-    speed_R = (int16_t)v.speed_r;
+    speed_L = Wheel_CountsToRPM(v.speed_l, CAR_WHEEL_CPR_LEFT);
+    speed_R = Wheel_CountsToRPM(v.speed_r, CAR_WHEEL_CPR_RIGHT);
     dl = (int32_t)((uint32_t)v.position_l - previous_l);
     dr = (int32_t)((uint32_t)v.position_r - previous_r);
     previous_l = (uint32_t)v.position_l;
@@ -330,7 +332,7 @@ void FSM_ControlLoop_10ms(void)
     }
     if (g_system_state == SYS_STATE_BRAKE) {
         Control_Stop();
-        if (now - brake_start_time >= 500u || (abs(speed_L) <= 4 && abs(speed_R) <= 4))
+        if (now - brake_start_time >= 500u || v.quiet_ticks >= 30u)
             Enter_Standby_State();
         return;
     }
@@ -365,7 +367,7 @@ void FSM_ControlLoop_10ms(void)
     }
     if (line_detected || heading) line_seen_tick = now;
     else if (now - line_seen_tick >= ROUTE_LINE_LOST_MS) { fault_stop(FSM_FAULT_LINE_LOST); return; }
-    drive(g_system_state == SYS_STATE_RUN_ABCD ? ROUTE_ABCD_SPEED : ROUTE_ACBD_SPEED, heading);
+    drive(g_system_state == SYS_STATE_RUN_ABCD ? ROUTE_ABCD_RPM : ROUTE_ACBD_RPM, heading);
 }
 void FSM_OLED_Update(void)
 {
@@ -382,7 +384,7 @@ void FSM_OLED_Update(void)
     else if (g_system_state == SYS_STATE_BRAKE)
         OLED_PrintString(20, 20, "BRAKE", &font16x16, OLED_COLOR_NORMAL);
     else {
-        snprintf(text, sizeof text, "L:%d R:%d", speed_L, speed_R);
+        snprintf(text, sizeof text, "RPM %.1f %.1f", (double)speed_L, (double)speed_R);
         OLED_PrintString(0, 0, text, &font16x16, OLED_COLOR_NORMAL);
         snprintf(text, sizeof text, "lap:%u/%u p:%u", g_current_laps, g_target_laps, (unsigned)g_acbd_phase);
         OLED_PrintString(0, 16, text, &font16x16, OLED_COLOR_NORMAL);
