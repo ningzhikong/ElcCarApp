@@ -69,7 +69,8 @@ void OLED_PrintString(uint8_t x, uint8_t y, char *s, const Font *font, OLED_Colo
   if (!strcmp(s, "RPM 10.0 10.0")) shown_rpm = 1;
   if (y == 48) { assert(strlen(s) == 11); strcpy(ir_pattern, s + 3); } }
 
-static void center(void) { memset(gray, 0, sizeof gray); gray[3] = 2900; }
+static void white(void) { for (unsigned i = 0; i < 8; ++i) gray[i] = 4095; }
+static void center(void) { white(); gray[3] = 0; }
 static void step_wheels(int left, int right)
 {
     now += 10;
@@ -99,7 +100,7 @@ static void mark(unsigned gap, unsigned width)
 {
     center();
     for (unsigned i = 0; i < gap; ++i) step(10);
-    for (unsigned i = 0; i < 8; ++i) gray[i] = 3500;
+    memset(gray, 0, sizeof gray);
     for (unsigned i = 0; i < width; ++i) step(10);
     center(); step(10);
 }
@@ -111,9 +112,23 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "counter_wrap"))
         measured.position_l = measured.position_r = 0x7ffffff0;
     if (!strcmp(argv[1], "initial_marker"))
-        for (unsigned i = 0; i < 8; ++i) gray[i] = 3500;
+        memset(gray, 0, sizeof gray);
     Car_System_Init();
-    if (!strcmp(argv[1], "ir_idle")) {
+    if (!strcmp(argv[1], "digital_polarity")) {
+        start('R', '1'); unsigned before = beeps;
+        white();
+        for (unsigned i = 0; i < 25; ++i) step(10);
+        assert(beeps == before && g_system_state == SYS_STATE_RUN_ABCD);
+        center(); step(10);
+        assert(beeps == before && g_fsm_fault == FSM_FAULT_NONE);
+        mark(0, 5); assert(beeps == before + 1);
+    } else if (!strcmp(argv[1], "digital_centroid")) {
+        start('R', '1'); step(10);
+        white(); gray[2] = 0; gray[4] = 2000; step(10);
+        /* Both are digital-low black; their ADC magnitudes must not bias
+         * the center (-1.5 + 0.5)/2 = -0.5, same as the starting line. */
+        assert(fabsf(turn + 2.0f) < .0001f);
+    } else if (!strcmp(argv[1], "ir_idle")) {
         for (unsigned i = 0; i < 8; ++i) gray[i] = i % 2 ? 3000 : 0;
         gray[0] = 2600; /* Threshold equality is 0, just like route detection. */
         FSM_OLED_Update(); assert(!strcmp(ir_pattern, "01010101"));
@@ -126,7 +141,7 @@ int main(int argc, char **argv)
     } else if (!strcmp(argv[1], "ir_running")) {
         start('R', '1'); step(1);
         adc_error = 4; FSM_OLED_Update(); /* Must reuse the running control scan. */
-        assert(!strcmp(ir_pattern, "00010000") && g_system_state == SYS_STATE_RUN_ABCD);
+        assert(!strcmp(ir_pattern, "11101111") && g_system_state == SYS_STATE_RUN_ABCD);
         now += 101; FSM_OLED_Update(); assert(!strcmp(ir_pattern, "????????"));
     } else if (!strcmp(argv[1], "rpm_units")) {
         assert(configured_rpm == 1 && base == 0);
@@ -167,7 +182,7 @@ int main(int argc, char **argv)
         mark(75, 5); assert(beeps == before + 1);
     } else if (!strcmp(argv[1], "half_counts")) {
         start('R', '1'); unsigned before = beeps;
-        for (unsigned i = 0; i < 8; ++i) gray[i] = 3500;
+        memset(gray, 0, sizeof gray);
         for (unsigned i = 0; i < 40; ++i) step_wheels(1, 0);
         center(); step_wheels(1, 0); assert(beeps == before + 1);
     } else if (!strcmp(argv[1], "short_lap")) {
@@ -183,14 +198,14 @@ int main(int argc, char **argv)
     } else if (!strcmp(argv[1], "line")) {
         start('B', '1'); mark(75, 5);
         assert(g_acbd_phase == ACBD_LINE_TO_B);
-        memset(gray, 0, sizeof gray); gray[0] = 3500; step(10);
-        float left = turn; gray[0] = 0; gray[7] = 3500; step(10);
+        white(); gray[0] = 0; step(10);
+        float left = turn; gray[0] = 4095; gray[7] = 0; step(10);
         assert(left < 0 && turn > 0);
     } else if (!strcmp(argv[1], "adc")) {
         start('R', '1'); adc_error = 4; step(10);
         assert(g_fsm_fault == FSM_FAULT_ADC && base == 0);
     } else if (!strcmp(argv[1], "lost_line")) {
-        start('R', '1'); memset(gray, 0, sizeof gray);
+        start('R', '1'); white();
         for (unsigned i = 0; i < 45; ++i) step(10);
         assert(g_fsm_fault == FSM_FAULT_LINE_LOST && base == 0);
     } else if (!strcmp(argv[1], "imu_read") || !strcmp(argv[1], "imu_gap")) {

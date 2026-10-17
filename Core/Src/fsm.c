@@ -122,7 +122,6 @@ static bool GraySensor_Scan(void)
     uint32_t sum = 0;
     float weighted = 0.0f;
     unsigned black = 0;
-    bool detected = false;
     gray_valid = false;
     for (unsigned i = 0; i < 8; ++i) {
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, (i & 1u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
@@ -136,18 +135,21 @@ static bool GraySensor_Scan(void)
         }
         frame[i] = (uint16_t)HAL_ADC_GetValue(&hadc1);
         if (HAL_ADC_Stop(&hadc1) != HAL_OK) return false;
-        sum += frame[i];
-        weighted += frame[i] * ((float)i - 3.5f);
-        if (frame[i] > ROUTE_GRAY_BLACK) ++black;
-        if (frame[i] > ROUTE_GRAY_LINE) detected = true;
+        /* The module already thresholds gray internally: black is a low
+         * digital output, white is high. Do not weight the white voltage. */
+        if (frame[i] <= ROUTE_GRAY_LINE) {
+            ++sum;
+            weighted += (float)i - 3.5f;
+            ++black;
+        }
     }
     /* Publish only complete frames. Failed scans cannot create marker edges. */
     memcpy(gray_adc, frame, sizeof frame);
     gray_valid = true;
     gray_tick = HAL_GetTick();
-    line_detected = detected && sum > 400u;
+    line_detected = black > 0u;
     gray_error = line_detected ? weighted / (float)sum : 0.0f;
-    is_on_peak = black >= 5u || (frame[3] > 3000u && frame[4] > 3000u);
+    is_on_peak = black >= 5u || (frame[3] <= ROUTE_GRAY_LINE && frame[4] <= ROUTE_GRAY_LINE);
     return true;
 }
 static float wrap_yaw(float value)
