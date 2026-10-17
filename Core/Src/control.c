@@ -38,6 +38,8 @@ void Motor_SetPWM(int16_t left, int16_t right)
     if (left < -999) left = -999;
     if (right > 999) right = 999;
     if (right < -999) right = -999;
+    left = (int16_t)(left * CAR_MOTOR_SIGN_LEFT);
+    right = (int16_t)(right * CAR_MOTOR_SIGN_RIGHT);
     /* One writer in the control ISR. GPIO labels preserve PCB wiring. */
     HAL_GPIO_WritePin(motorLeftUp_GPIO_Port, motorLeftUp_Pin,
                       left < 0 ? GPIO_PIN_SET : GPIO_PIN_RESET);

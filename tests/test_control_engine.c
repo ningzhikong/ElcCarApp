@@ -15,6 +15,7 @@ int htim2, htim3, htim4;
 int hi2c1, test_i2c_busy;
 static uint32_t now, mask;
 static int test_mode;
+static GPIO_PinState pin_states[7];
 static unsigned i2c_calls;
 static int i2c_error, i2c_race, check_pixels;
 void HAL_Delay(uint32_t ms) { now += ms; }
@@ -51,7 +52,7 @@ int HAL_TIM_PWM_Start(void *timer, unsigned channel)
     return HAL_OK;
 }
 void HAL_GPIO_WritePin(void *port, uint16_t pin, GPIO_PinState state)
-{ (void)port; (void)pin; (void)state; }
+{ (void)port; assert(pin < 7u); pin_states[pin] = state; }
 uint32_t HAL_RCC_GetPCLK2Freq(void) { return 72000000u; }
 void HAL_RCC_GetClockConfig(RCC_ClkInitTypeDef *clocks, uint32_t *latency)
 { clocks->APB2CLKDivider = RCC_HCLK_DIV1; *latency = 2u; }
@@ -104,7 +105,24 @@ int main(int argc, char **argv)
         puts("control_tuned_profile: PASS"); return 0;
     }
 #endif
-    if (!strcmp(argv[1], "quiet")) {
+    if (!strcmp(argv[1], "motor_polarity")) {
+        Motor_SetPWM(150, 100);
+        assert(TIM3->CCR3 == 150 && TIM3->CCR4 == 100);
+        assert(pin_states[motorLeftUp_Pin] == GPIO_PIN_SET);
+        assert(pin_states[motorLeftBack_Pin] == GPIO_PIN_RESET);
+        assert(pin_states[motorRightUp_Pin] == GPIO_PIN_SET);
+        assert(pin_states[motorRightBack_Pin] == GPIO_PIN_RESET);
+        Motor_SetPWM(-150, -100);
+        assert(TIM3->CCR3 == 150 && TIM3->CCR4 == 100);
+        assert(pin_states[motorLeftUp_Pin] == GPIO_PIN_RESET);
+        assert(pin_states[motorLeftBack_Pin] == GPIO_PIN_SET);
+        assert(pin_states[motorRightUp_Pin] == GPIO_PIN_RESET);
+        assert(pin_states[motorRightBack_Pin] == GPIO_PIN_SET);
+        Motor_SetPWM(-32768, 32767);
+        assert(TIM3->CCR3 == 999 && TIM3->CCR4 == 999);
+        Control_Stop();
+        assert(TIM3->CCR3 == 0 && TIM3->CCR4 == 0);
+    } else if (!strcmp(argv[1], "quiet")) {
         for (unsigned i = 0; i < 30; ++i) view = tick(10, 0, 0);
         assert(view.quiet_ticks == 30);
         view = tick(10, 1, 0); assert(view.quiet_ticks == 0);

@@ -31,7 +31,7 @@ if __name__ == '__main__':
                     str(ROOT / 'tests/test_control_engine.c'), '-lm', '-o', str(engine)], check=True)
     engine_scenarios = ('sampling', 'stale', 'timing', 'stop', 'test_zero', 'cycle_wrap', 'invalid_target',
                         'sign_change', 'invalid_gains', 'fractional_limit',
-                        'oled_busy', 'oled_race', 'oled_frame', 'oled_error', 'quiet')
+                        'oled_busy', 'oled_race', 'oled_frame', 'oled_error', 'quiet', 'motor_polarity')
     for scenario in engine_scenarios:
         subprocess.run([str(engine), scenario], check=True)
     tuned = output / 'tuned_profile_tests.exe'

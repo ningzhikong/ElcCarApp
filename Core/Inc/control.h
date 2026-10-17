@@ -16,6 +16,18 @@
 #endif
 
 #define CONTROL_PERIOD_MS 10u
+/* Bench observation: both wheels moved backwards with the original polarity.
+ * Motor polarity is independent of encoder polarity and PI tuning. */
+#ifndef CAR_MOTOR_SIGN_LEFT
+#define CAR_MOTOR_SIGN_LEFT -1
+#endif
+#ifndef CAR_MOTOR_SIGN_RIGHT
+#define CAR_MOTOR_SIGN_RIGHT -1
+#endif
+#if (CAR_MOTOR_SIGN_LEFT != 1 && CAR_MOTOR_SIGN_LEFT != -1) || \
+    (CAR_MOTOR_SIGN_RIGHT != 1 && CAR_MOTOR_SIGN_RIGHT != -1)
+#error Motor signs must be +1 or -1
+#endif
 #ifndef CAR_ENCODER_SIGN_LEFT
 #if CAR_TUNED_PI_ENABLED
 #define CAR_ENCODER_SIGN_LEFT CAR_TUNED_SIGN_LEFT
