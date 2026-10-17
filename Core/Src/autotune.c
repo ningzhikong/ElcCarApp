@@ -1,5 +1,6 @@
 #include "autotune.h"
 #include "serial_router.h"
+#include "wheel_calibration.h"
 #ifndef CAR_HOST_TEST
 #include "usart.h"
 #endif
@@ -31,6 +32,7 @@
 typedef struct {
     uint32_t id;
     float kp_l, ki_l, kp_r, ki_r, peak, limit;
+    uint8_t rpm_mode;
 } RunConfig;
 typedef struct {
     uint32_t time_ms;
@@ -145,7 +147,7 @@ void Autotune_BeforeControl(uint32_t now_ms)
         if (!jog_active)
             Control_ConfigurePI(active.kp_l, active.ki_l, active.kp_r, active.ki_r, active.limit);
         state = STATE_RUN;
-        ack_pending = jog_active ? 2u : 1u;
+        ack_pending = jog_active ? 2u : (active.rpm_mode ? 3u : 1u);
     }
     if (state != STATE_RUN) return;
     elapsed = now_ms - start_tick;
@@ -158,7 +160,8 @@ void Autotune_BeforeControl(uint32_t now_ms)
     else if (jog_active) Control_SetJogPWM(jog_l, jog_r);
     else {
         float target = target_at(elapsed);
-        Control_SetTargets(target, target);
+        Control_SetTargets(active.rpm_mode ? Wheel_RPMToCounts(target, CAR_WHEEL_CPR_LEFT) : target,
+                           active.rpm_mode ? Wheel_RPMToCounts(target, CAR_WHEEL_CPR_RIGHT) : target);
     }
 }
 
@@ -283,6 +286,10 @@ static void command(char *line)
             (double)view.speed_l, (double)view.speed_r,
             (unsigned long)view.period_us, (unsigned long)view.fault);
         send_text(out);
+    } else if (n == 1u && !strcmp(tokens[0], "CAL")) {
+        snprintf(out, sizeof out, "CAL MANUAL_REF_V1 %u %u\n",
+            CAR_WHEEL_CPR_LEFT, CAR_WHEEL_CPR_RIGHT);
+        send_text(out);
     } else if (n == 1u && !strcmp(tokens[0], "ENC")) {
         Control_ReadView(&view);
         snprintf(out, sizeof out, "ENC %lu %ld %ld\n", (unsigned long)view.tick_ms,
@@ -330,7 +337,8 @@ static void command(char *line)
         pending_jog_ms = (uint32_t)duration;
         pending_run = 2u;
         __set_PRIMASK(saved);
-    } else if (n == 8u && !strcmp(tokens[0], "RUN")) {
+    } else if (n == 8u && (!strcmp(tokens[0], "RUN") || !strcmp(tokens[0], "RUNRPM"))) {
+        config.rpm_mode = !strcmp(tokens[0], "RUNRPM");
         if (!request_id(tokens[1], &config.id) ||
             !number(tokens[2], 0.0f, 10.0f, &config.kp_l) ||
             !number(tokens[3], 0.0f, 2.0f, &config.ki_l) ||
@@ -340,6 +348,13 @@ static void command(char *line)
             !number(tokens[7], 20.0f, 200.0f, &config.limit) ||
             config.limit != (float)(unsigned)config.limit) {
             send_text("ERR GAINS\n"); return;
+        }
+        if (config.rpm_mode &&
+            (!(Wheel_RPMToCounts(config.peak, CAR_WHEEL_CPR_LEFT) >= 1.0f &&
+               Wheel_RPMToCounts(config.peak, CAR_WHEEL_CPR_LEFT) <= 25.0f) ||
+             !(Wheel_RPMToCounts(config.peak, CAR_WHEEL_CPR_RIGHT) >= 1.0f &&
+               Wheel_RPMToCounts(config.peak, CAR_WHEEL_CPR_RIGHT) <= 25.0f))) {
+            send_text("ERR RPM\n"); return;
         }
         saved = lock();
         if (!armed || state == STATE_RUN || pending_run || quiet_ticks < 30u ||
@@ -409,8 +424,9 @@ void Autotune_Poll(void)
                 (unsigned long)applied.id, (int)applied_l, (int)applied_r,
                 (unsigned long)applied_ms);
         } else {
-        snprintf(out, sizeof out, "ACK %lu %.6f %.6f %.6f %.6f %.4f %.0f\n",
-            (unsigned long)applied.id, (double)applied.kp_l, (double)applied.ki_l,
+        snprintf(out, sizeof out, "%s %lu %.6f %.6f %.6f %.6f %.4f %.0f\n",
+            ack_kind == 3u ? "RPMACK" : "ACK", (unsigned long)applied.id,
+            (double)applied.kp_l, (double)applied.ki_l,
             (double)applied.kp_r, (double)applied.ki_r,
             (double)applied.peak, (double)applied.limit);
         }

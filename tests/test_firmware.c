@@ -142,7 +142,38 @@ int main(int argc, char **argv)
     Autotune_Init();
     exchange("HELLO\n", "HELLO ELC_AUTOTUNE_V1 INC_PI_COUNTS_10MS 10 50 5500\n");
     exchange("INFO\n", "INFO ELC_INC_PI_V1 ");
-    if (!strncmp(argv[1], "jog_", 4)) {
+    if (!strcmp(argv[1], "rpm_profile")) {
+        exchange("CAL\n", "CAL MANUAL_REF_V1 1080 1320\n");
+        arm(); clear_output(); feed("RUNRPM 7 2 .3 2 .3 20 100\n");
+        assert(!strstr(output, "RPMACK"));
+        for (unsigned i = 0; i <= 550; ++i) {
+            if (i % 10 == 0) feed("PING\n");
+            tick(i ? 3 : 0); Autotune_Poll();
+            if (i == 0) assert(strstr(output, "RPMACK 7 2.000000 0.300000 2.000000 0.300000 20.0000 100"));
+            if (i == 50) {
+                assert(fabsf(measured.target_l - 1.44f) < .00001f);
+                assert(fabsf(measured.target_r - 1.76f) < .00001f);
+            }
+            if (i == 150) {
+                assert(fabsf(measured.target_l - 3.6f) < .00001f);
+                assert(fabsf(measured.target_r - 4.4f) < .00001f);
+            }
+            if (i == 300) {
+                assert(fabsf(measured.target_l - 1.8f) < .00001f);
+                assert(fabsf(measured.target_r - 2.2f) < .00001f);
+            }
+            if (i == 450) assert(measured.pwm_l == 0 && measured.pwm_r == 0);
+        }
+        exchange("STATUS\n", "STATUS 7 2 0 111 5500 0");
+        assert(measured.pwm_l == 0 && measured.pwm_r == 0);
+    } else if (!strcmp(argv[1], "rpm_validation")) {
+        arm();
+        exchange("RUNRPM 7 2 .3 2 .3 5 100\n", "ERR RPM");
+        exchange("RUNRPM 7 2 .3 2 .3 nan 100\n", "ERR GAINS");
+        exchange("RUNRPM 7 2 .3 2 .3 26 100\n", "ERR GAINS");
+        exchange("RUNRPM 7 2 .3 2 .3 20 201\n", "ERR GAINS");
+        assert(configured == 0 && measured.pwm_l == 0);
+    } else if (!strncmp(argv[1], "jog_", 4)) {
         exchange("JOG 9 150 0 800\n", "ERR NOT_ARMED");
         arm();
         if (!strcmp(argv[1], "jog_validation")) {

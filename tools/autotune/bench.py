@@ -114,8 +114,12 @@ def evaluate(rows, peak, limit):
 class Board:
     def __init__(self, port, folder):
         import serial
-        self.connection = serial.Serial(port, 115200, timeout=.1, write_timeout=.5)
+        self.connection = serial.Serial(port=None, baudrate=115200, timeout=.1, write_timeout=.5)
+        self.connection.dtr = False
+        self.connection.rts = False
+        self.connection.port = port
         try:
+            self.connection.open()
             self.connection.reset_input_buffer()
             self.audit = (folder / 'serial.jsonl').open('w', encoding='utf-8')
         except BaseException:
@@ -173,7 +177,7 @@ class Board:
                 raise RuntimeError('Drive cancelled, but encoder motion did not settle')
             time.sleep(.1)
 
-    def run(self, args, experiment_id=1):
+    def run(self, args, experiment_id=1, wheel_cpr=None):
         validate_parameters(args)
         if type(experiment_id) is not int or not 1 <= experiment_id <= 1000000000:
             raise ValueError('Invalid experiment id')
@@ -191,14 +195,22 @@ class Board:
         if getattr(self, 'firmware_info', identity) != identity:
             raise RuntimeError('Firmware changed within this experiment session')
         self.firmware_info = identity
+        if wheel_cpr is not None:
+            if (len(wheel_cpr) != 2 or any(type(c) is not int or c <= 0 or c > 1000000 for c in wheel_cpr)
+                    or any(not 1 <= args.peak * c / 6000 <= 25 for c in wheel_cpr)):
+                raise ValueError('RPM conversion exceeds the counts/10ms envelope')
+            self.send('CAL')
+            if self.read() != f'CAL MANUAL_REF_V1 {wheel_cpr[0]} {wheel_cpr[1]}':
+                raise RuntimeError('Wheel calibration does not match firmware')
         self.wait_stopped()
         self.send(f'ARM {args.sign_left} {args.sign_right}')
         if self.read() != f'ARMED {args.sign_left} {args.sign_right}':
             raise RuntimeError('ARM was not confirmed')
         gains = [round(g, 6) for g in (args.kp_left, args.ki_left, args.kp_right, args.ki_right)]
-        self.send(f'RUN {experiment_id} ' + ' '.join(f'{g:.6f}' for g in gains) + f' {args.peak:.4f} {args.pwm_limit}')
+        mode = 'RUNRPM' if wheel_cpr is not None else 'RUN'
+        self.send(f'{mode} {experiment_id} ' + ' '.join(f'{g:.6f}' for g in gains) + f' {args.peak:.4f} {args.pwm_limit}')
         ack = self.read().split()
-        if len(ack) != 8 or ack[:2] != ['ACK', str(experiment_id)]:
+        if len(ack) != 8 or ack[:2] != ['RPMACK' if wheel_cpr is not None else 'ACK', str(experiment_id)]:
             raise ValueError('Invalid applied-parameter ACK')
         values = list(map(float, ack[2:]))
         if any(not math.isfinite(x) or abs(x - y) > .000001 for x, y in zip(values, gains + [args.peak, args.pwm_limit])):
