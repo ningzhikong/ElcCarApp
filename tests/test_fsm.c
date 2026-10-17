@@ -21,6 +21,7 @@ static int init_error, calibration_error, read_error, adc_error = -1;
 static float gyro_y, base, turn;
 static int receiving, shown_fault, configured_rpm, shown_rpm;
 static int calibration_motion;
+static char ir_pattern[16];
 
 uint32_t HAL_GetTick(void) { return now; }
 GPIO_PinState HAL_GPIO_ReadPin(void *p, uint16_t pin)
@@ -64,8 +65,9 @@ int HAL_UART_Transmit(void *h, uint8_t *data, uint16_t n, uint32_t timeout)
 void OLED_NewFrame(void) { shown_fault = 0; }
 void OLED_ShowFrame(void) { }
 void OLED_PrintString(uint8_t x, uint8_t y, char *s, const Font *font, OLED_ColorMode color)
-{ (void)x; (void)y; (void)font; (void)color; if (strstr(s, "FAULT")) shown_fault = 1;
-  if (!strcmp(s, "RPM 10.0 10.0")) shown_rpm = 1; }
+{ (void)x; (void)font; (void)color; if (strstr(s, "FAULT")) shown_fault = 1;
+  if (!strcmp(s, "RPM 10.0 10.0")) shown_rpm = 1;
+  if (y == 48) { assert(strlen(s) == 11); strcpy(ir_pattern, s + 3); } }
 
 static void center(void) { memset(gray, 0, sizeof gray); gray[3] = 2900; }
 static void step_wheels(int left, int right)
@@ -111,7 +113,22 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "initial_marker"))
         for (unsigned i = 0; i < 8; ++i) gray[i] = 3500;
     Car_System_Init();
-    if (!strcmp(argv[1], "rpm_units")) {
+    if (!strcmp(argv[1], "ir_idle")) {
+        for (unsigned i = 0; i < 8; ++i) gray[i] = i % 2 ? 3000 : 0;
+        gray[0] = 2600; /* Threshold equality is 0, just like route detection. */
+        FSM_OLED_Update(); assert(!strcmp(ir_pattern, "01010101"));
+        assert(base == 0 && g_system_state == SYS_STATE_STANDBY);
+        memset(gray, 0, sizeof gray); FSM_OLED_Update(); assert(!strcmp(ir_pattern, "00000000"));
+        adc_error = 4; FSM_OLED_Update(); assert(!strcmp(ir_pattern, "????????"));
+        adc_error = -1;
+        for (unsigned i = 0; i < 8; ++i) gray[i] = 4095;
+        FSM_OLED_Update(); assert(!strcmp(ir_pattern, "11111111"));
+    } else if (!strcmp(argv[1], "ir_running")) {
+        start('R', '1'); step(1);
+        adc_error = 4; FSM_OLED_Update(); /* Must reuse the running control scan. */
+        assert(!strcmp(ir_pattern, "00010000") && g_system_state == SYS_STATE_RUN_ABCD);
+        now += 101; FSM_OLED_Update(); assert(!strcmp(ir_pattern, "????????"));
+    } else if (!strcmp(argv[1], "rpm_units")) {
         assert(configured_rpm == 1 && base == 0);
         start('R', '1'); step(1);
         measured.speed_l = 1.8f; measured.speed_r = 2.2f;

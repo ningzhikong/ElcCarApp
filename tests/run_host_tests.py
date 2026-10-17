@@ -34,7 +34,7 @@ if __name__ == '__main__':
                     str(ROOT / 'tests/test_control_engine.c'), '-lm', '-o', str(engine)], check=True)
     engine_scenarios = ('sampling', 'stale', 'timing', 'stop', 'test_zero', 'cycle_wrap', 'invalid_target',
                         'sign_change', 'invalid_gains', 'fractional_limit',
-                        'oled_busy', 'oled_race', 'oled_frame', 'oled_error', 'quiet', 'motor_polarity',
+                        'oled_busy', 'oled_race', 'oled_frame', 'oled_error', 'oled_busy_resume', 'oled_init_busy', 'oled_init_retry', 'quiet', 'motor_polarity',
                         'jog_output', 'jog_invalid', 'rpm_feedback', 'rpm_feedback_guard', 'rpm_feedback_slow',
                         'drive_rpm', 'drive_windows', 'drive_invalid', 'drive_unconfigured', 'drive_reconfigure',
                         'drive_stall', 'drive_direction', 'drive_speed', 'drive_stale', 'drive_timing', 'drive_sparse')
@@ -55,7 +55,7 @@ if __name__ == '__main__':
                     str(ROOT / 'tests/test_fsm.c'), '-lm', '-o', str(route)], check=True)
     route_scenarios = ('vision_default', 'vision_noise', 'marker', 'initial_marker', 'half_counts', 'lap', 'two_laps', 'short_lap', 'counter_wrap', 'acbd', 'line',
                        'imu_init', 'imu_calibration', 'imu_read', 'imu_gap', 'adc', 'lost_line',
-                       'timeout0', 'timeout1', 'timeout2', 'timeout3', 'control_fault', 'ack_motion', 'manual_stop', 'rpm_units')
+                       'timeout0', 'timeout1', 'timeout2', 'timeout3', 'control_fault', 'ack_motion', 'manual_stop', 'rpm_units', 'ir_idle', 'ir_running')
     for scenario in route_scenarios:
         subprocess.run([str(route), scenario], check=True)
     mpu = output / 'mpu_tests.exe'

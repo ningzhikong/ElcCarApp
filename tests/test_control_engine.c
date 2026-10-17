@@ -18,11 +18,14 @@ static int test_mode;
 static GPIO_PinState pin_states[7];
 static unsigned i2c_calls;
 static int i2c_error, i2c_race, check_pixels;
+static uint8_t commands[160];
+static unsigned command_count;
 void HAL_Delay(uint32_t ms) { now += ms; }
 int HAL_I2C_Master_Transmit(void *h, uint16_t address, uint8_t *data, uint16_t n, uint32_t timeout)
 {
     (void)h; assert(address == 0x78 && timeout == 3 && n <= 17);
     ++i2c_calls;
+    if (data[0] == 0) { assert(command_count < sizeof commands); commands[command_count++] = data[1]; }
     if (check_pixels && data[0] == 0x40) {
         assert(n == 17);
         for (unsigned i = 1; i < n; ++i) assert(data[i] == 0xa5);
@@ -244,6 +247,30 @@ int main(int argc, char **argv)
         for (unsigned i = 0; i < 30; ++i) view = tick(10, 0, 0);
         assert(view.quiet_ticks == 30);
         view = tick(10, 1, 0); assert(view.quiet_ticks == 0);
+    } else if (!strcmp(argv[1], "oled_busy_resume")) {
+        extern uint8_t OLED_GRAM[8][128];
+        memset(OLED_GRAM, 0xa5, sizeof OLED_GRAM); OLED_ShowFrame();
+        check_pixels = 1;
+        for (unsigned i = 0; i < 88; ++i) {
+            test_i2c_busy = 1; OLED_Poll(); assert(i2c_calls == i);
+            test_i2c_busy = 0; OLED_Poll(); assert(i2c_calls == i + 1);
+        }
+        OLED_Poll(); assert(i2c_calls == 88);
+    } else if (!strcmp(argv[1], "oled_init_busy")) {
+        OLED_Init();
+        for (unsigned i = 0; i < 112; ++i) {
+            test_i2c_busy = 1; OLED_Poll(); assert(i2c_calls == i);
+            test_i2c_busy = 0; OLED_Poll(); assert(i2c_calls == i + 1);
+        }
+        assert(command_count == 48 && commands[0] == 0xae && commands[23] == 0xaf);
+        OLED_Poll(); assert(i2c_calls == 112);
+    } else if (!strcmp(argv[1], "oled_init_retry")) {
+        OLED_Init(); i2c_error = 1; OLED_Poll(); assert(i2c_calls == 1);
+        OLED_Poll(); assert(i2c_calls == 1);
+        i2c_error = 0; now += 50; OLED_Poll();
+        assert(i2c_calls == 2 && commands[0] == 0xae && commands[1] == 0xae);
+        for (unsigned i = 0; i < 111; ++i) OLED_Poll();
+        assert(i2c_calls == 113 && commands[24] == 0xaf);
     } else if (!strcmp(argv[1], "oled_busy")) {
         Control_SetTargets(10, 10); test_i2c_busy = 1;
         OLED_ShowFrame(); OLED_Poll();

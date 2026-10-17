@@ -52,7 +52,7 @@ uint8_t OLED_GRAM[OLED_PAGE][OLED_COLUMN];
  */
 static int OLED_Send(uint8_t *data, uint8_t len) {
   /* HAL's BUSY wait has its own 25ms timeout; avoid entering it at all. */
-  if (__HAL_I2C_GET_FLAG(&hi2c1, I2C_FLAG_BUSY)) return 0;
+  if (__HAL_I2C_GET_FLAG(&hi2c1, I2C_FLAG_BUSY)) return -1;
   return HAL_I2C_Master_Transmit(&hi2c1, OLED_ADDRESS, data, len, 3u) == HAL_OK;
 }
 
@@ -70,48 +70,18 @@ static int OLED_SendCmd(uint8_t cmd) {
  * @brief 初始化OLED
  * @note 此函数是移植本驱动时的重要函数 将本驱动库移植到其他驱动芯片时应根据实际情况修改此函数
  */
+static const uint8_t init_commands[] = {
+    0xAE, 0x00, 0x10, 0x40, 0x81, 0xCF, 0xA1, 0xC8, 0xA6,
+    0xA8, 0x3F, 0xD3, 0x00, 0xD5, 0x80, 0xD9, 0xF1, 0xDA,
+    0x12, 0xDB, 0x40, 0x8D, 0x14, 0xAF
+};
+static uint8_t init_pending, init_index;
+static volatile uint32_t completed_frames, error_count;
+
 void OLED_Init(void) {
-    HAL_Delay(100); // 确保模块内部复位完成
-
-    OLED_SendCmd(0xAE); // 关闭显示 (Display OFF)
-    
-    OLED_SendCmd(0x00); // 设置列低地址
-    OLED_SendCmd(0x10); // 设置列高地址
-    OLED_SendCmd(0x40); // 设置起始行起始地址
-    
-    OLED_SendCmd(0x81); // 对比度控制
-    OLED_SendCmd(0xCF); // 推荐对比度值
-    
-    OLED_SendCmd(0xA1); // 段重映射 (左右反转，A0/A1)
-    OLED_SendCmd(0xC8); // 行扫描方向 (上下反转，C0/C8)
-    
-    OLED_SendCmd(0xA6); // 正常显示 (A6正常, A7反色)
-    
-    OLED_SendCmd(0xA8); // 设置多路复用率
-    OLED_SendCmd(0x3F); // 1/64 占空比 (对应 128x64)
-    
-    OLED_SendCmd(0xD3); // 设置显示偏移
-    OLED_SendCmd(0x00); // 无偏移
-    
-    OLED_SendCmd(0xD5); // 设置显示时钟分频
-    OLED_SendCmd(0x80); // 晶振频率推荐值
-    
-    OLED_SendCmd(0xD9); // 设置预充电周期
-    OLED_SendCmd(0xF1);
-    
-    OLED_SendCmd(0xDA); // 设置 COM 引脚硬件配置
-    OLED_SendCmd(0x12);
-    
-    OLED_SendCmd(0xDB); // 设置 VCOMH 反压值
-    OLED_SendCmd(0x40);
-    
-    /* 核心关键两步：开启内置电荷泵升压电路 */
-    OLED_SendCmd(0x8D); // 电荷泵设置指令
-    OLED_SendCmd(0x14); // 0x14 为开启电荷泵 (若不开启此项屏幕完全不发光)
-    
-    OLED_SendCmd(0xAF); // 开启显示 (Display ON)
-
-    /* 清除显存并刷屏一次 */
+    HAL_Delay(100);
+    init_index = 0u;
+    init_pending = 1u;
     OLED_NewFrame();
     OLED_ShowFrame();
 }
@@ -176,11 +146,13 @@ void OLED_Poll(void) {
     uint8_t packet[17];
     int success;
     uint32_t now = HAL_GetTick();
-    if (!transfer_busy) return;
+    if (!transfer_busy && !init_pending) return;
     if (retry_pending && now - retry_tick < 50u) return;
     retry_pending = 0u;
     /* Exactly one transaction per Poll, including the page setup commands. */
-    if (transfer_stage < 3u) {
+    if (init_pending) {
+        success = OLED_SendCmd(init_commands[init_index]);
+    } else if (transfer_stage < 3u) {
         uint8_t command = transfer_stage == 0u ? (uint8_t)(0xB0u + transfer_page) :
                           transfer_stage == 1u ? 0x02u : 0x10u;
         success = OLED_SendCmd(command);
@@ -189,10 +161,20 @@ void OLED_Poll(void) {
         memcpy(packet + 1, transfer_frame[transfer_page] + transfer_column, 16u);
         success = OLED_Send(packet, sizeof packet);
     }
+    /* STOP takes time to release the bus. Preserve both the frame and the
+     * initialization index until it is idle; a busy bus is not a NACK. */
+    if (success < 0) return;
     if (!success) {
-        transfer_busy = 0u;
+        ++error_count;
+        init_pending = 1u;
+        init_index = 0u;
+        transfer_page = transfer_column = transfer_stage = 0u;
         retry_pending = 1u;
         retry_tick = HAL_GetTick();
+        return;
+    }
+    if (init_pending) {
+        if (++init_index == sizeof init_commands) init_pending = 0u;
         return;
     }
     if (transfer_stage < 3u) { ++transfer_stage; return; }
@@ -200,7 +182,7 @@ void OLED_Poll(void) {
     if (transfer_column == 128u) {
         transfer_column = 0u;
         transfer_stage = 0u;
-        if (++transfer_page == 8u) transfer_busy = 0u;
+        if (++transfer_page == 8u) { transfer_busy = 0u; ++completed_frames; }
     }
 }
 

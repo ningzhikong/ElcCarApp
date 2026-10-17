@@ -33,6 +33,8 @@ static int64_t total_encoder_twice, lap_start_twice;
 static uint32_t peak_maintain_pulse;
 static bool is_on_peak, peak_event, peak_locked_out, is_straight_locked;
 static uint16_t gray_adc[8];
+static bool gray_valid;
+static uint32_t gray_tick;
 static float gray_error, current_yaw, target_straight_yaw, mpu_bias[3];
 static bool line_detected, mpu_ready;
 static Turn_PID_t line_pid, heading_pid;
@@ -121,6 +123,7 @@ static bool GraySensor_Scan(void)
     float weighted = 0.0f;
     unsigned black = 0;
     bool detected = false;
+    gray_valid = false;
     for (unsigned i = 0; i < 8; ++i) {
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, (i & 1u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, (i & 2u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
@@ -140,6 +143,8 @@ static bool GraySensor_Scan(void)
     }
     /* Publish only complete frames. Failed scans cannot create marker edges. */
     memcpy(gray_adc, frame, sizeof frame);
+    gray_valid = true;
+    gray_tick = HAL_GetTick();
     line_detected = detected && sum > 400u;
     gray_error = line_detected ? weighted / (float)sum : 0.0f;
     is_on_peak = black >= 5u || (frame[3] > 3000u && frame[4] > 3000u);
@@ -372,24 +377,35 @@ void FSM_ControlLoop_10ms(void)
 void FSM_OLED_Update(void)
 {
     char text[32];
+    /* Running uses its existing scan; idle diagnostics must also be live.
+     * A failed idle scan is shown as unknown, never as a valid old pattern. */
+    if (!running()) GraySensor_Scan();
     OLED_NewFrame();
     if (g_system_state == SYS_STATE_FAULT) {
         snprintf(text, sizeof text, "FAULT %u CTL:%lu", (unsigned)g_fsm_fault, (unsigned long)Control_GetFault());
         OLED_PrintString(0, 0, text, &font16x16, OLED_COLOR_NORMAL);
-        OLED_PrintString(0, 24, "STOP / ACK KEY", &font16x16, OLED_COLOR_NORMAL);
+        OLED_PrintString(0, 16, "STOP / ACK KEY", &font16x16, OLED_COLOR_NORMAL);
     } else if (g_system_state == SYS_STATE_STANDBY)
-        OLED_PrintString(20, 20, "STANDBY", &font16x16, OLED_COLOR_NORMAL);
+        OLED_PrintString(0, 0, "STANDBY", &font16x16, OLED_COLOR_NORMAL);
     else if (g_system_state == SYS_STATE_VISION)
-        OLED_PrintString(20, 20, "VISION", &font16x16, OLED_COLOR_NORMAL);
+        OLED_PrintString(0, 0, "VISION", &font16x16, OLED_COLOR_NORMAL);
     else if (g_system_state == SYS_STATE_BRAKE)
-        OLED_PrintString(20, 20, "BRAKE", &font16x16, OLED_COLOR_NORMAL);
+        OLED_PrintString(0, 0, "BRAKE", &font16x16, OLED_COLOR_NORMAL);
     else {
         snprintf(text, sizeof text, "RPM %.1f %.1f", (double)speed_L, (double)speed_R);
         OLED_PrintString(0, 0, text, &font16x16, OLED_COLOR_NORMAL);
         snprintf(text, sizeof text, "lap:%u/%u p:%u", g_current_laps, g_target_laps, (unsigned)g_acbd_phase);
         OLED_PrintString(0, 16, text, &font16x16, OLED_COLOR_NORMAL);
-        snprintf(text, sizeof text, "e:%.1f y:%.1f", (double)gray_error, (double)current_yaw);
-        OLED_PrintString(0, 32, text, &font16x16, OLED_COLOR_NORMAL);
     }
+    if (!running() && g_system_state != SYS_STATE_FAULT) {
+        snprintf(text, sizeof text, "RPM %.1f %.1f", (double)speed_L, (double)speed_R);
+        OLED_PrintString(0, 16, text, &font16x16, OLED_COLOR_NORMAL);
+    }
+    OLED_PrintString(0, 32, "IR:12345678", &font16x16, OLED_COLOR_NORMAL);
+    memcpy(text, "   ????????", 12u);
+    if (gray_valid && HAL_GetTick() - gray_tick <= 100u) {
+        for (unsigned i = 0; i < 8; ++i) text[i + 3u] = gray_adc[i] > ROUTE_GRAY_LINE ? '1' : '0';
+    }
+    OLED_PrintString(0, 48, text, &font16x16, OLED_COLOR_NORMAL);
     OLED_ShowFrame();
 }
