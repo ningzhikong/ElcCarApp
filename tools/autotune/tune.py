@@ -246,6 +246,8 @@ def optimize(experiments, provider, args, folder):
                   'termination': termination,
                   'best_response': min(best_results, key=lambda r: abs(r['score'] - group_stats(best_results)['median'])),
                   'decisions': decisions, 'groups': history}
+        if hasattr(experiments, 'profile'):
+            report['profile'] = experiments.profile
         save(folder / 'checkpoint.json', report)
         return report
 
