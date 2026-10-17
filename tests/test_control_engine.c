@@ -105,7 +105,29 @@ int main(int argc, char **argv)
         puts("control_tuned_profile: PASS"); return 0;
     }
 #endif
-    if (!strcmp(argv[1], "motor_polarity")) {
+    if (!strcmp(argv[1], "jog_output")) {
+        test_mode = 1;
+        Control_SetJogPWM(150, 0); view = tick(10, -4, 2);
+        assert(view.pwm_l == 150 && view.pwm_r == 0 && view.target_l == 0);
+        assert(pin_states[motorLeftUp_Pin] == GPIO_PIN_SET);
+        Control_Stop(); view = tick(10, 0, 0);
+        assert(view.pwm_l == 0 && TIM3->CCR3 == 0);
+        Control_SetJogPWM(0, -100); view = tick(10, 0, 0);
+        assert(view.pwm_l == 0 && view.pwm_r == -100);
+        assert(pin_states[motorRightUp_Pin] == GPIO_PIN_RESET);
+        Control_SetTargets(0, 0); view = tick(10, 0, 0);
+        assert(view.pwm_l == 0 && view.pwm_r == 0);
+        Control_SetJogPWM(100, 0); tick(10, 0, 0);
+        for (unsigned i = 0; i < 10; ++i) view = tick(10, 0, 0);
+        assert(view.fault == CONTROL_FAULT_STALE_TARGET && TIM3->CCR3 == 0);
+    } else if (!strcmp(argv[1], "jog_invalid")) {
+        test_mode = 1; Control_SetJogPWM(100, 100);
+        assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
+        Control_ClearFault(); Control_SetJogPWM(151, 0);
+        assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
+        Control_ClearFault(); test_mode = 0; Control_SetJogPWM(100, 0);
+        assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY && TIM3->CCR3 == 0);
+    } else if (!strcmp(argv[1], "motor_polarity")) {
         Motor_SetPWM(150, 100);
         assert(TIM3->CCR3 == 150 && TIM3->CCR4 == 100);
         assert(pin_states[motorLeftUp_Pin] == GPIO_PIN_SET);

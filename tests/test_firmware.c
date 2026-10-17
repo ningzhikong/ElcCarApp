@@ -57,6 +57,12 @@ void Control_SetTargets(float l, float r)
     measured.pwm_l = l > 0.0f ? pwm_cap * pwm_fraction : 0.0f;
     measured.pwm_r = r > 0.0f ? pwm_cap * pwm_fraction : 0.0f;
 }
+void Control_SetJogPWM(int16_t l, int16_t r)
+{
+    assert(abs(l) <= 150 && abs(r) <= 150 && !(l && r));
+    measured.target_l = measured.target_r = 0.0f;
+    measured.pwm_l = (float)l; measured.pwm_r = (float)r;
+}
 
 static void clear_output(void) { output_length = 0u; output[0] = 0; }
 static void feed(const char *text)
@@ -136,7 +142,53 @@ int main(int argc, char **argv)
     Autotune_Init();
     exchange("HELLO\n", "HELLO ELC_AUTOTUNE_V1 INC_PI_COUNTS_10MS 10 50 5500\n");
     exchange("INFO\n", "INFO ELC_INC_PI_V1 ");
-    if (!strcmp(argv[1], "validation")) {
+    if (!strncmp(argv[1], "jog_", 4)) {
+        exchange("JOG 9 150 0 800\n", "ERR NOT_ARMED");
+        arm();
+        if (!strcmp(argv[1], "jog_validation")) {
+            const char *invalid[] = {"JOG 9 151 0 800\n", "JOG 9 150 0 801\n",
+                "JOG 9 0 0 500\n", "JOG 9 100 100 500\n", "JOG 9 nan 0 500\n",
+                "JOG 9 100.5 0 500\n", "JOG 9 100 0 49\n", "JOG 9 100 0 500.5\n",
+                "JOG 9 100 0 51\n"};
+            for (unsigned i = 0; i < sizeof invalid / sizeof invalid[0]; ++i)
+                exchange(invalid[i], "ERR JOG");
+            assert(measured.pwm_l == 0 && measured.pwm_r == 0);
+        } else if (!strcmp(argv[1], "jog_cancel")) {
+            feed("JOG 9 150 0 800\nSTOP\n"); tick(0);
+            assert(measured.pwm_l == 0 && measured.pwm_r == 0);
+            exchange("STATUS\n", "STATUS 0 3 0");
+        } else if (!strcmp(argv[1], "jog_expiry")) {
+            for (unsigned i = 0; i < 499; ++i) tick(0);
+            feed("JOG 9 150 0 800\n"); tick(0); Autotune_Poll();
+            assert(strstr(output, "ERR ARM_EXPIRED"));
+            assert(measured.pwm_l == 0 && measured.pwm_r == 0);
+        } else {
+            clear_output(); feed("JOG 9 -150 0 800\n");
+            assert(!strstr(output, "JOGACK"));
+            tick(0); Autotune_Poll();
+            assert(strstr(output, "JOGACK 9 -150 0 800\n"));
+            assert(configured == 0 && measured.pwm_l == -150 && measured.pwm_r == 0);
+            exchange("JOG 10 0 100 800\n", "ERR NOT_ARMED");
+            if (!strcmp(argv[1], "jog_complete")) {
+                for (unsigned i = 0; i < 79; ++i) tick(-3);
+                assert(measured.pwm_l == -150);
+                tick(-3); exchange("STATUS\n", "STATUS 9 2 0 17 800 0");
+            } else if (!strcmp(argv[1], "jog_key")) {
+                stop_key = 1; tick(0); exchange("STATUS\n", "STATUS 9 3 0");
+            } else if (!strcmp(argv[1], "jog_uart")) {
+                Autotune_OnUartError(); Autotune_Poll();
+                exchange("\nSTATUS\n", "STATUS 9 4 11");
+            } else if (!strcmp(argv[1], "jog_speed")) {
+                tick(101); exchange("STATUS\n", "STATUS 9 4 14");
+            } else if (!strcmp(argv[1], "jog_control_fault")) {
+                Control_LatchFault(CONTROL_FAULT_TIMING); tick(0);
+                exchange("STATUS\n", "STATUS 9 4 1");
+            } else if (!strcmp(argv[1], "jog_stop")) {
+                exchange("STOP\n", "STOPPED"); tick(0);
+            } else assert(0);
+            assert(measured.pwm_l == 0 && measured.pwm_r == 0);
+        }
+    } else if (!strcmp(argv[1], "validation")) {
         exchange("RUN 7 2 .3 2 .3 5 100\n", "ERR NOT_ARMED");
         arm();
         exchange("RUN 7 nan .3 2 .3 5 100\n", "ERR GAINS");

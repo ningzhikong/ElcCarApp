@@ -46,6 +46,9 @@ static uint32_t start_tick, next_sample, quiet_ticks, stall_l, stall_r, wrong_ti
 static uint32_t no_motion_l, no_motion_r;
 static volatile uint32_t arm_tick;
 static RunConfig pending, active;
+static int16_t pending_jog_l, pending_jog_r, jog_l, jog_r;
+static uint32_t pending_jog_ms, jog_ms;
+static uint8_t jog_active;
 static Sample trace[TRACE_CAPACITY];
 static uint8_t rx_queue[256];
 static volatile uint16_t rx_head, rx_tail;
@@ -74,6 +77,7 @@ static void finish(uint32_t final_state, uint32_t reason)
     state = final_state;
     fault = reason;
     armed = pending_run = 0u;
+    jog_active = 0u;
     __set_PRIMASK(saved);
 }
 
@@ -129,16 +133,19 @@ void Autotune_BeforeControl(uint32_t now_ms)
             start_expired = 1u;
             return;
         }
+        jog_active = pending_run == 2u;
         active = pending;
+        jog_l = pending_jog_l; jog_r = pending_jog_r; jog_ms = pending_jog_ms;
         pending_run = 0u;
         count = elapsed = next_sample = 0u;
         stall_l = stall_r = wrong_ticks = 0u;
         no_motion_l = no_motion_r = 0u;
         fault = 0u;
         start_tick = heartbeat_tick = now_ms;
-        Control_ConfigurePI(active.kp_l, active.ki_l, active.kp_r, active.ki_r, active.limit);
+        if (!jog_active)
+            Control_ConfigurePI(active.kp_l, active.ki_l, active.kp_r, active.ki_r, active.limit);
         state = STATE_RUN;
-        ack_pending = 1u;
+        ack_pending = jog_active ? 2u : 1u;
     }
     if (state != STATE_RUN) return;
     elapsed = now_ms - start_tick;
@@ -147,7 +154,8 @@ void Autotune_BeforeControl(uint32_t now_ms)
         finish(STATE_STOPPED, 0u);
     else if (now_ms - heartbeat_tick >= HEARTBEAT_MS)
         finish(STATE_FAULT, FAULT_HEARTBEAT);
-    else if (elapsed >= DURATION_MS) finish(STATE_DONE, 0u);
+    else if (elapsed >= (jog_active ? jog_ms : DURATION_MS)) finish(STATE_DONE, 0u);
+    else if (jog_active) Control_SetJogPWM(jog_l, jog_r);
     else {
         float target = target_at(elapsed);
         Control_SetTargets(target, target);
@@ -165,26 +173,30 @@ void Autotune_AfterControl(const ControlView *v)
             finish(STATE_FAULT, FAULT_SPEED);
             return;
         }
-        if ((v->target_l > 0.0f && v->raw_l < -2) ||
-            (v->target_r > 0.0f && v->raw_r < -2)) ++wrong_ticks;
-        else wrong_ticks = 0u;
-        if (wrong_ticks >= 3u) {
-            finish(STATE_FAULT, FAULT_DIRECTION);
-            return;
+        /* Jog establishes physical polarity: use a hard <=800ms duration
+         * instead of feedback-dependent direction/stall checks. */
+        if (!jog_active) {
+            if ((v->target_l > 0.0f && v->raw_l < -2) ||
+                (v->target_r > 0.0f && v->raw_r < -2)) ++wrong_ticks;
+            else wrong_ticks = 0u;
+            if (wrong_ticks >= 3u) {
+                finish(STATE_FAULT, FAULT_DIRECTION);
+                return;
+            }
+            /* A full-scale cap below 80 must not disable the fast stall guard. */
+            float stall_pwm = active.limit < 80.0f ? active.limit * 0.8f : 80.0f;
+            if (v->target_l > 0.0f && v->pwm_l >= stall_pwm && v->raw_l == 0) ++stall_l;
+            else stall_l = 0u;
+            if (v->target_r > 0.0f && v->pwm_r >= stall_pwm && v->raw_r == 0) ++stall_r;
+            else stall_r = 0u;
+            /* Includes zero gains and insufficient PWM: never finish a silent wheel. */
+            if (v->target_l > 0.0f && v->raw_l <= 0) ++no_motion_l;
+            else no_motion_l = 0u;
+            if (v->target_r > 0.0f && v->raw_r <= 0) ++no_motion_r;
+            else no_motion_r = 0u;
+            if (stall_l >= 50u || stall_r >= 50u) finish(STATE_FAULT, FAULT_STALL);
+            if (no_motion_l >= 100u || no_motion_r >= 100u) finish(STATE_FAULT, FAULT_STALL);
         }
-        /* A full-scale cap below 80 must not disable the fast stall guard. */
-        float stall_pwm = active.limit < 80.0f ? active.limit * 0.8f : 80.0f;
-        if (v->target_l > 0.0f && v->pwm_l >= stall_pwm && v->raw_l == 0) ++stall_l;
-        else stall_l = 0u;
-        if (v->target_r > 0.0f && v->pwm_r >= stall_pwm && v->raw_r == 0) ++stall_r;
-        else stall_r = 0u;
-        /* Includes zero gains and insufficient PWM: never finish a silent wheel. */
-        if (v->target_l > 0.0f && v->raw_l <= 0) ++no_motion_l;
-        else no_motion_l = 0u;
-        if (v->target_r > 0.0f && v->raw_r <= 0) ++no_motion_r;
-        else no_motion_r = 0u;
-        if (stall_l >= 50u || stall_r >= 50u) finish(STATE_FAULT, FAULT_STALL);
-        if (no_motion_l >= 100u || no_motion_r >= 100u) finish(STATE_FAULT, FAULT_STALL);
     }
     if (state != STATE_RUN && state != STATE_DONE) return;
     if (elapsed < next_sample || (state == STATE_DONE && next_sample > DURATION_MS)) return;
@@ -271,6 +283,11 @@ static void command(char *line)
             (double)view.speed_l, (double)view.speed_r,
             (unsigned long)view.period_us, (unsigned long)view.fault);
         send_text(out);
+    } else if (n == 1u && !strcmp(tokens[0], "ENC")) {
+        Control_ReadView(&view);
+        snprintf(out, sizeof out, "ENC %lu %ld %ld\n", (unsigned long)view.tick_ms,
+            (long)view.position_l, (long)view.position_r);
+        send_text(out);
     } else if (n == 3u && !strcmp(tokens[0], "ARM")) {
         int left, right;
         if ((strcmp(tokens[1], "1") && strcmp(tokens[1], "-1")) ||
@@ -290,6 +307,29 @@ static void command(char *line)
         __set_PRIMASK(saved);
         snprintf(out, sizeof out, "ARMED %d %d\n", left, right);
         send_text(out);
+    } else if (n == 5u && !strcmp(tokens[0], "JOG")) {
+        float left, right, duration;
+        memset(&config, 0, sizeof config);
+        if (!request_id(tokens[1], &config.id) ||
+            !number(tokens[2], -150.0f, 150.0f, &left) ||
+            !number(tokens[3], -150.0f, 150.0f, &right) ||
+            !number(tokens[4], 50.0f, 800.0f, &duration) ||
+            left != (float)(int)left || right != (float)(int)right ||
+            duration != (float)(unsigned)duration || (unsigned)duration % 10u != 0u ||
+            (left != 0.0f && right != 0.0f) || (left == 0.0f && right == 0.0f)) {
+            send_text("ERR JOG\n"); return;
+        }
+        saved = lock();
+        if (!armed || state == STATE_RUN || pending_run || quiet_ticks < 30u ||
+            Control_GetFault() || io_error) {
+            __set_PRIMASK(saved); send_text("ERR NOT_ARMED\n"); return;
+        }
+        config.limit = 150.0f;
+        pending = config;
+        pending_jog_l = (int16_t)left; pending_jog_r = (int16_t)right;
+        pending_jog_ms = (uint32_t)duration;
+        pending_run = 2u;
+        __set_PRIMASK(saved);
     } else if (n == 8u && !strcmp(tokens[0], "RUN")) {
         if (!request_id(tokens[1], &config.id) ||
             !number(tokens[2], 0.0f, 10.0f, &config.kp_l) ||
@@ -357,13 +397,23 @@ void Autotune_Poll(void)
     }
     if (ack_pending) {
         RunConfig applied;
+        uint8_t ack_kind;
+        int16_t applied_l, applied_r;
+        uint32_t applied_ms;
         saved = lock();
-        applied = active; ack_pending = 0u;
+        applied = active; ack_kind = ack_pending; ack_pending = 0u;
+        applied_l = jog_l; applied_r = jog_r; applied_ms = jog_ms;
         __set_PRIMASK(saved);
+        if (ack_kind == 2u) {
+            snprintf(out, sizeof out, "JOGACK %lu %d %d %lu\n",
+                (unsigned long)applied.id, (int)applied_l, (int)applied_r,
+                (unsigned long)applied_ms);
+        } else {
         snprintf(out, sizeof out, "ACK %lu %.6f %.6f %.6f %.6f %.4f %.0f\n",
             (unsigned long)applied.id, (double)applied.kp_l, (double)applied.ki_l,
             (double)applied.kp_r, (double)applied.ki_r,
             (double)applied.peak, (double)applied.limit);
+        }
         send_text(out);
     }
     /* Bounded work so a noisy peer cannot monopolize the foreground. */

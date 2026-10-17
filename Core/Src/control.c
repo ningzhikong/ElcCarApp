@@ -13,6 +13,8 @@ static float filtered_l, filtered_r;
 static float requested_l, requested_r;
 static int encoder_sign_l = CAR_ENCODER_SIGN_LEFT, encoder_sign_r = CAR_ENCODER_SIGN_RIGHT;
 static volatile uint8_t drive_enabled;
+static uint8_t jog_enabled;
+static int16_t jog_l, jog_r;
 static uint32_t target_tick, previous_cycles;
 
 static uint32_t lock(void)
@@ -97,6 +99,7 @@ void Control_Stop(void)
 {
     uint32_t saved = lock();
     drive_enabled = 0u;
+    jog_enabled = 0u;
     requested_l = requested_r = 0.0f;
     PID_Reset(&pid_L);
     PID_Reset(&pid_R);
@@ -169,6 +172,21 @@ void Control_ConfigurePI(float kp_l, float ki_l, float kp_r, float ki_r, float l
     __set_PRIMASK(saved);
 }
 
+void Control_SetJogPWM(int16_t left, int16_t right)
+{
+    uint32_t saved = lock();
+    if (!Autotune_IsEnabled() || left < -150 || left > 150 ||
+        right < -150 || right > 150 || (left != 0 && right != 0)) {
+        Control_LatchFault(CONTROL_FAULT_EMERGENCY);
+    } else if (current.fault == CONTROL_FAULT_NONE) {
+        jog_l = left; jog_r = right;
+        requested_l = requested_r = 0.0f;
+        target_tick = HAL_GetTick();
+        jog_enabled = drive_enabled = 1u;
+    }
+    __set_PRIMASK(saved);
+}
+
 void Control_SetTargets(float left, float right)
 {
     uint32_t saved = lock();
@@ -186,6 +204,7 @@ void Control_SetTargets(float left, float right)
         return;
     }
     if (current.fault == CONTROL_FAULT_NONE) {
+        jog_enabled = 0u;
         requested_l = left;
         requested_r = right;
         target_tick = HAL_GetTick();
@@ -276,10 +295,10 @@ void Control_TimerIRQ(void)
     current.target_l = requested_l;
     current.target_r = requested_r;
     if (drive_enabled && current.fault == CONTROL_FAULT_NONE) {
-        out_l = PID_Incremental_Calc(&pid_L, requested_l, filtered_l);
-        out_r = PID_Incremental_Calc(&pid_R, requested_r, filtered_r);
+        out_l = jog_enabled ? (float)jog_l : PID_Incremental_Calc(&pid_L, requested_l, filtered_l);
+        out_r = jog_enabled ? (float)jog_r : PID_Incremental_Calc(&pid_R, requested_r, filtered_r);
         /* Bench/tuned PI is forward only; zero target cancels PWM. */
-        if (Autotune_IsEnabled() || CAR_TUNED_PI_ENABLED) {
+        if (!jog_enabled && (Autotune_IsEnabled() || CAR_TUNED_PI_ENABLED)) {
             if (out_l < 0.0f || requested_l == 0.0f) out_l = pid_L.output = 0.0f;
             if (out_r < 0.0f || requested_r == 0.0f) out_r = pid_R.output = 0.0f;
         }

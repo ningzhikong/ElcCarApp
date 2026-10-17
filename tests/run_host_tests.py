@@ -7,7 +7,9 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS = ('math', 'validation', 'cancel_pending', 'complete', 'heartbeat',
              'direction', 'stall', 'stop_key', 'uart_fault', 'frame', 'overflow', 'slow_motion', 'arm_expiry', 'pending_expiry',
-             'low_stall20', 'low_stall50', 'low_stall79', 'no_motion', 'sparse_motion')
+             'low_stall20', 'low_stall50', 'low_stall79', 'no_motion', 'sparse_motion',
+             'jog_validation', 'jog_cancel', 'jog_expiry', 'jog_complete', 'jog_key',
+             'jog_uart', 'jog_speed', 'jog_control_fault', 'jog_stop')
 
 
 if __name__ == '__main__':
@@ -31,7 +33,8 @@ if __name__ == '__main__':
                     str(ROOT / 'tests/test_control_engine.c'), '-lm', '-o', str(engine)], check=True)
     engine_scenarios = ('sampling', 'stale', 'timing', 'stop', 'test_zero', 'cycle_wrap', 'invalid_target',
                         'sign_change', 'invalid_gains', 'fractional_limit',
-                        'oled_busy', 'oled_race', 'oled_frame', 'oled_error', 'quiet', 'motor_polarity')
+                        'oled_busy', 'oled_race', 'oled_frame', 'oled_error', 'quiet', 'motor_polarity',
+                        'jog_output', 'jog_invalid')
     for scenario in engine_scenarios:
         subprocess.run([str(engine), scenario], check=True)
     tuned = output / 'tuned_profile_tests.exe'
