@@ -12,17 +12,25 @@ float Encoder_Filter(float previous, int32_t delta)
     return previous + 0.125f * ((float)delta - previous);
 }
 
-void Encoder_WindowReset(EncoderWindow10 *window)
+void Encoder_WindowReset(EncoderWindow *window)
 {
     memset(window, 0, sizeof *window);
 }
 
-float Encoder_WindowStep(EncoderWindow10 *window, int32_t delta)
+float Encoder_WindowStep(EncoderWindow *window, int32_t delta, unsigned ticks)
 {
-    window->sum += delta - window->samples[window->next];
+    int32_t sum = 0;
+    unsigned index;
+    if (ticks < 1u) ticks = 1u;
+    if (ticks > 25u) ticks = 25u;
     window->samples[window->next] = delta;
-    window->next = (window->next + 1u) % 10u;
-    return (float)window->sum / 10.0f;
+    if (++window->next == 25u) window->next = 0u;
+    index = window->next;
+    for (unsigned i = 0; i < ticks; ++i) {
+        index = index ? index - 1u : 24u;
+        sum += window->samples[index];
+    }
+    return (float)sum / (float)ticks;
 }
 
 void PID_Reset(Speed_PID_t *pid)

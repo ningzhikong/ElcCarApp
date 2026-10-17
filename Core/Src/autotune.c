@@ -290,7 +290,7 @@ static void command(char *line)
             (unsigned long)view.period_us, (unsigned long)view.fault);
         send_text(out);
     } else if (n == 1u && !strcmp(tokens[0], "RPMINFO")) {
-        send_text("RPMINFO ELC_RPM_PI_BOXCAR10_V1\n");
+        send_text("RPMINFO ELC_RPM_PI_ADAPTIVE_V1\n");
     } else if (n == 1u && !strcmp(tokens[0], "CAL")) {
         snprintf(out, sizeof out, "CAL MANUAL_REF_V1 %u %u\n",
             CAR_WHEEL_CPR_LEFT, CAR_WHEEL_CPR_RIGHT);

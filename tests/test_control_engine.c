@@ -105,7 +105,17 @@ int main(int argc, char **argv)
         puts("control_tuned_profile: PASS"); return 0;
     }
 #endif
-    if (!strcmp(argv[1], "rpm_feedback")) {
+    if (!strcmp(argv[1], "rpm_feedback_slow")) {
+        test_mode = 1; Control_SetRPMFeedback(1);
+        for (unsigned i = 0; i < 60; ++i) {
+            int delta = i % 20 < 7 ? 5 : 0;
+            Control_SetTargets(1.8f, 2.2f); view = tick(10, delta, delta);
+            assert(view.raw_l == delta);
+            if (i >= 19) assert(view.speed_l == 1.75f);
+        }
+        Control_Stop(); Control_SetRPMFeedback(0);
+        view = tick(10, 8, 8); assert(view.speed_l == 1);
+    } else if (!strcmp(argv[1], "rpm_feedback")) {
         test_mode = 1;
         Control_SetRPMFeedback(1);
         for (unsigned i = 0; i < 20; ++i) {

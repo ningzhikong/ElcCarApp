@@ -53,7 +53,7 @@ class MatchTests(unittest.TestCase):
 
     def test_hold_protocol_ack(self):
         board = FakeBoard('CAL MANUAL_REF_V1 1080 1320')
-        board.replies += ['RPMINFO ELC_RPM_PI_BOXCAR10_V1', 'STOPPED', 'STATUS 0 3 0 0 0 0 1', 'ARMED 1 1',
+        board.replies += ['RPMINFO ELC_RPM_PI_ADAPTIVE_V1', 'STOPPED', 'STATUS 0 3 0 0 0 0 1', 'ARMED 1 1',
                           'HOLDACK 1 2.000000 0.300000 2.000000 0.300000 20.0000 150',
                           'STATUS 1 2 0 111 5500 0 0', 'BEGIN 1 111',
                           *[','.join(map(str, row)) for row in trace(hold=True)], 'END']
@@ -99,7 +99,7 @@ class MatchTests(unittest.TestCase):
     def test_rpm_protocol_roundtrip_and_ack_units(self):
         for prefix in ('RPMACK', 'ACK'):
             board = FakeBoard('CAL MANUAL_REF_V1 1080 1320')
-            board.replies += ['RPMINFO ELC_RPM_PI_BOXCAR10_V1', 'STOPPED', 'STATUS 0 3 0 0 0 0 1', 'ARMED 1 1',
+            board.replies += ['RPMINFO ELC_RPM_PI_ADAPTIVE_V1', 'STOPPED', 'STATUS 0 3 0 0 0 0 1', 'ARMED 1 1',
                               f'{prefix} 1 2.000000 0.300000 2.000000 0.300000 20.0000 150',
                               'STATUS 1 2 0 111 5500 0 0', 'BEGIN 1 111',
                               *[','.join(map(str, row)) for row in trace()], 'END']

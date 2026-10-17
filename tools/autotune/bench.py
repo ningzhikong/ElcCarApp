@@ -205,7 +205,7 @@ class Board:
             if self.read() != f'CAL MANUAL_REF_V1 {wheel_cpr[0]} {wheel_cpr[1]}':
                 raise RuntimeError('Wheel calibration does not match firmware')
             self.send('RPMINFO')
-            if self.read() != 'RPMINFO ELC_RPM_PI_BOXCAR10_V1':
+            if self.read() != 'RPMINFO ELC_RPM_PI_ADAPTIVE_V1':
                 raise RuntimeError('RPM feedback estimator does not match firmware')
         self.wait_stopped()
         self.send(f'ARM {args.sign_left} {args.sign_right}')

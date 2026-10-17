@@ -94,7 +94,7 @@ def main():
     folder = args.output / ('match_' + datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
     folder.mkdir(parents=True, exist_ok=False)
     result = {'source': 'fixed_gain_rpm_hold_check' if args.hold else 'fixed_gain_rpm_check',
-              'rpm_controller': 'ELC_RPM_PI_BOXCAR10_V1',
+              'rpm_controller': 'ELC_RPM_PI_ADAPTIVE_V1',
               'profile': 'hold' if args.hold else 'step', 'build_id': args.build_id,
               'rpm': args.peak, 'pwm_limit': args.pwm_limit,
               'gains': [args.kp_left, args.ki_left, args.kp_right, args.ki_right],

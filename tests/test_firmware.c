@@ -1,5 +1,6 @@
 #include "autotune.h"
 #include "control_math.h"
+#include "wheel_calibration.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -116,19 +117,36 @@ static void test_math(void)
     assert(Encoder_Delta16(2u, 65534u) == 4);
     assert(Encoder_Delta16(65534u, 2u) == -4);
     {
-        EncoderWindow10 window;
+        EncoderWindow window;
         Encoder_WindowReset(&window);
         for (unsigned i = 0; i < 100; ++i) {
-            float speed = Encoder_WindowStep(&window, i % 10 < 7 ? 5 : 0);
+            float speed = Encoder_WindowStep(&window, i % 10 < 7 ? 5 : 0, 10);
             if (i >= 9) assert(speed == 3.5f);
         }
         Encoder_WindowReset(&window);
-        for (unsigned i = 0; i < 10; ++i) Encoder_WindowStep(&window, -32768);
-        assert(Encoder_WindowStep(&window, -32768) == -32768.0f);
+        for (unsigned i = 0; i < 10; ++i) Encoder_WindowStep(&window, -32768, 10);
+        assert(Encoder_WindowStep(&window, -32768, 10) == -32768.0f);
         Encoder_WindowReset(&window);
-        assert(Encoder_WindowStep(&window, 10) == 1.0f);
-        for (unsigned i = 0; i < 10; ++i) Encoder_WindowStep(&window, 0);
-        assert(window.sum == 0);
+        assert(Encoder_WindowStep(&window, 10, 10) == 1.0f);
+        for (unsigned i = 0; i < 10; ++i) Encoder_WindowStep(&window, 0, 10);
+        assert(Encoder_WindowStep(&window, 0, 10) == 0);
+        Encoder_WindowReset(&window);
+        for (unsigned i = 0; i < 100; ++i) {
+            float speed = Encoder_WindowStep(&window, i % 20 < 7 ? 5 : 0, 20);
+            if (i >= 19) assert(speed == 1.75f);
+        }
+        Encoder_WindowReset(&window);
+        for (unsigned i = 0; i < 50; ++i) Encoder_WindowStep(&window, 2, 25);
+        assert(Encoder_WindowStep(&window, 2, 10) == 2);
+        assert(Encoder_WindowStep(&window, 2, 20) == 2);
+        assert(Encoder_WindowStep(&window, 2, 0) == 2);
+        assert(Encoder_WindowStep(&window, 2, 100) == 2);
+        assert(Wheel_RPMWindowTicks(20) == 10);
+        assert(Wheel_RPMWindowTicks(10) == 20);
+        assert(Wheel_RPMWindowTicks(8) == 25);
+        assert(Wheel_RPMWindowTicks(25) == 8);
+        assert(Wheel_RPMWindowTicks(0) == 25);
+        assert(Wheel_RPMWindowTicks(NAN) == 25);
     }
     for (int delta = -32768; delta < 32768; ++delta) {
         uint16_t previous = 60000u;
@@ -161,7 +179,7 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "rpm_profile") || !strcmp(argv[1], "rpm_hold")) {
         int hold = !strcmp(argv[1], "rpm_hold");
         exchange("CAL\n", "CAL MANUAL_REF_V1 1080 1320\n");
-        exchange("RPMINFO\n", "RPMINFO ELC_RPM_PI_BOXCAR10_V1\n");
+        exchange("RPMINFO\n", "RPMINFO ELC_RPM_PI_ADAPTIVE_V1\n");
         arm(); clear_output(); feed(hold ? "HOLDRPM 7 2 .3 2 .3 20 100\n" : "RUNRPM 7 2 .3 2 .3 20 100\n");
         assert(!strstr(output, "RPMACK"));
         for (unsigned i = 0; i <= 550; ++i) {

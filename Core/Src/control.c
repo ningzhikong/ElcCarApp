@@ -3,6 +3,7 @@
 #include "tim.h"
 #endif
 #include "autotune.h"
+#include "wheel_calibration.h"
 #include <string.h>
 
 Speed_PID_t pid_L, pid_R;
@@ -10,8 +11,9 @@ Turn_PID_t pid_turn;
 static volatile ControlView current;
 static uint16_t previous_l, previous_r;
 static float filtered_l, filtered_r;
-static EncoderWindow10 window_l, window_r;
+static EncoderWindow window_l, window_r;
 static uint8_t rpm_feedback;
+static unsigned rpm_window_ticks = 10u;
 static float requested_l, requested_r;
 static int encoder_sign_l = CAR_ENCODER_SIGN_LEFT, encoder_sign_r = CAR_ENCODER_SIGN_RIGHT;
 static volatile uint8_t drive_enabled;
@@ -208,6 +210,8 @@ void Control_SetTargets(float left, float right)
     }
     if (current.fault == CONTROL_FAULT_NONE) {
         jog_enabled = 0u;
+        if (rpm_feedback && left > 0.0f)
+            rpm_window_ticks = Wheel_RPMWindowTicks(left * 6000.0f / CAR_WHEEL_CPR_LEFT);
         requested_l = left;
         requested_r = right;
         target_tick = HAL_GetTick();
@@ -223,6 +227,7 @@ void Control_SetRPMFeedback(int enabled)
         Control_LatchFault(CONTROL_FAULT_EMERGENCY);
     } else {
         rpm_feedback = enabled != 0;
+        rpm_window_ticks = 10u;
         Encoder_WindowReset(&window_l); Encoder_WindowReset(&window_r);
         filtered_l = filtered_r = 0.0f;
         current.speed_l = current.speed_r = 0.0f;
@@ -297,8 +302,8 @@ void Control_TimerIRQ(void)
     /* Unsigned arithmetic gives defined wrap; consumers use modular deltas. */
     current.position_l = (int32_t)((uint32_t)current.position_l + (uint32_t)current.raw_l);
     current.position_r = (int32_t)((uint32_t)current.position_r + (uint32_t)current.raw_r);
-    filtered_l = rpm_feedback ? Encoder_WindowStep(&window_l, current.raw_l) : Encoder_Filter(filtered_l, current.raw_l);
-    filtered_r = rpm_feedback ? Encoder_WindowStep(&window_r, current.raw_r) : Encoder_Filter(filtered_r, current.raw_r);
+    filtered_l = rpm_feedback ? Encoder_WindowStep(&window_l, current.raw_l, rpm_window_ticks) : Encoder_Filter(filtered_l, current.raw_l);
+    filtered_r = rpm_feedback ? Encoder_WindowStep(&window_r, current.raw_r, rpm_window_ticks) : Encoder_Filter(filtered_r, current.raw_r);
     current.speed_l = filtered_l;
     current.speed_r = filtered_r;
     current.tick_ms = now;
