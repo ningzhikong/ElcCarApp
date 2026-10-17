@@ -32,7 +32,7 @@ def target_at(t, peak):
     return 0.0 if t < 500 or t >= 4500 else .4 * peak if t < 1500 else peak if t < 3000 else .5 * peak
 
 
-def validate_trace(rows, peak, limit):
+def validate_trace(rows, peak, limit, target_profile=None):
     """Reject invalid experiments before calculating either wheel's score."""
     if not math.isfinite(peak) or not 1 <= peak <= 25 or not 20 <= limit <= 200 or int(limit) != limit:
         raise ValueError('Invalid experiment profile')
@@ -48,7 +48,7 @@ def validate_trace(rows, peak, limit):
             raise ValueError('Missing, duplicated or late samples')
         if not 5000 <= period <= 15000:
             raise ValueError('Invalid control period')
-        expected = target_at(t, peak)
+        expected = (target_profile or target_at)(t, peak)
         if abs(target_l - expected) > .00015 or abs(target_r - expected) > .00015:
             raise ValueError('Target profile does not match the applied experiment')
         if max(abs(raw_l), abs(raw_r), abs(speed_l), abs(speed_r)) > 100:
@@ -177,8 +177,10 @@ class Board:
                 raise RuntimeError('Drive cancelled, but encoder motion did not settle')
             time.sleep(.1)
 
-    def run(self, args, experiment_id=1, wheel_cpr=None):
+    def run(self, args, experiment_id=1, wheel_cpr=None, hold=False):
         validate_parameters(args)
+        if hold and wheel_cpr is None:
+            raise ValueError('RPM hold requires wheel calibration')
         if type(experiment_id) is not int or not 1 <= experiment_id <= 1000000000:
             raise ValueError('Invalid experiment id')
         self.send('HELLO')
@@ -207,10 +209,11 @@ class Board:
         if self.read() != f'ARMED {args.sign_left} {args.sign_right}':
             raise RuntimeError('ARM was not confirmed')
         gains = [round(g, 6) for g in (args.kp_left, args.ki_left, args.kp_right, args.ki_right)]
-        mode = 'RUNRPM' if wheel_cpr is not None else 'RUN'
+        mode = 'HOLDRPM' if hold else ('RUNRPM' if wheel_cpr is not None else 'RUN')
         self.send(f'{mode} {experiment_id} ' + ' '.join(f'{g:.6f}' for g in gains) + f' {args.peak:.4f} {args.pwm_limit}')
         ack = self.read().split()
-        if len(ack) != 8 or ack[:2] != ['RPMACK' if wheel_cpr is not None else 'ACK', str(experiment_id)]:
+        expected_ack = 'HOLDACK' if hold else ('RPMACK' if wheel_cpr is not None else 'ACK')
+        if len(ack) != 8 or ack[:2] != [expected_ack, str(experiment_id)]:
             raise ValueError('Invalid applied-parameter ACK')
         values = list(map(float, ack[2:]))
         if any(not math.isfinite(x) or abs(x - y) > .000001 for x, y in zip(values, gains + [args.peak, args.pwm_limit])):

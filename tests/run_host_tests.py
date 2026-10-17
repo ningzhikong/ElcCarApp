@@ -9,7 +9,7 @@ SCENARIOS = ('math', 'validation', 'cancel_pending', 'complete', 'heartbeat',
              'direction', 'stall', 'stop_key', 'uart_fault', 'frame', 'overflow', 'slow_motion', 'arm_expiry', 'pending_expiry',
              'low_stall20', 'low_stall50', 'low_stall79', 'no_motion', 'sparse_motion',
              'jog_validation', 'jog_cancel', 'jog_expiry', 'jog_complete', 'jog_key',
-             'jog_uart', 'jog_speed', 'jog_control_fault', 'jog_stop', 'rpm_profile', 'rpm_validation')
+             'jog_uart', 'jog_speed', 'jog_control_fault', 'jog_stop', 'rpm_profile', 'rpm_validation', 'rpm_hold')
 
 
 if __name__ == '__main__':

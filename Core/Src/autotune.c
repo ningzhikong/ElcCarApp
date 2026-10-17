@@ -32,7 +32,7 @@
 typedef struct {
     uint32_t id;
     float kp_l, ki_l, kp_r, ki_r, peak, limit;
-    uint8_t rpm_mode;
+    uint8_t rpm_mode, hold_mode;
 } RunConfig;
 typedef struct {
     uint32_t time_ms;
@@ -120,6 +120,7 @@ void Autotune_Init(void)
 static float target_at(uint32_t time_ms)
 {
     if (time_ms < 500u || time_ms >= 4500u) return 0.0f;
+    if (active.hold_mode) return active.peak;
     if (time_ms < 1500u) return active.peak * 0.4f;
     if (time_ms < 3000u) return active.peak;
     return active.peak * 0.5f;
@@ -147,7 +148,7 @@ void Autotune_BeforeControl(uint32_t now_ms)
         if (!jog_active)
             Control_ConfigurePI(active.kp_l, active.ki_l, active.kp_r, active.ki_r, active.limit);
         state = STATE_RUN;
-        ack_pending = jog_active ? 2u : (active.rpm_mode ? 3u : 1u);
+        ack_pending = jog_active ? 2u : (active.hold_mode ? 4u : (active.rpm_mode ? 3u : 1u));
     }
     if (state != STATE_RUN) return;
     elapsed = now_ms - start_tick;
@@ -337,8 +338,10 @@ static void command(char *line)
         pending_jog_ms = (uint32_t)duration;
         pending_run = 2u;
         __set_PRIMASK(saved);
-    } else if (n == 8u && (!strcmp(tokens[0], "RUN") || !strcmp(tokens[0], "RUNRPM"))) {
-        config.rpm_mode = !strcmp(tokens[0], "RUNRPM");
+    } else if (n == 8u && (!strcmp(tokens[0], "RUN") || !strcmp(tokens[0], "RUNRPM") ||
+                           !strcmp(tokens[0], "HOLDRPM"))) {
+        config.hold_mode = !strcmp(tokens[0], "HOLDRPM");
+        config.rpm_mode = config.hold_mode || !strcmp(tokens[0], "RUNRPM");
         if (!request_id(tokens[1], &config.id) ||
             !number(tokens[2], 0.0f, 10.0f, &config.kp_l) ||
             !number(tokens[3], 0.0f, 2.0f, &config.ki_l) ||
@@ -425,7 +428,7 @@ void Autotune_Poll(void)
                 (unsigned long)applied_ms);
         } else {
         snprintf(out, sizeof out, "%s %lu %.6f %.6f %.6f %.6f %.4f %.0f\n",
-            ack_kind == 3u ? "RPMACK" : "ACK", (unsigned long)applied.id,
+            ack_kind == 4u ? "HOLDACK" : (ack_kind == 3u ? "RPMACK" : "ACK"), (unsigned long)applied.id,
             (double)applied.kp_l, (double)applied.ki_l,
             (double)applied.kp_r, (double)applied.ki_r,
             (double)applied.peak, (double)applied.limit);

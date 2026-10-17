@@ -10,7 +10,11 @@ import re
 import bench
 
 
-def evaluate(rows, rpm, limit, cpr):
+def hold_target(t, rpm):
+    return rpm if 500 <= t < 4500 else 0.
+
+
+def evaluate(rows, rpm, limit, cpr, hold=False):
     if (not math.isfinite(rpm) or not 1 <= rpm <= 25 or not 20 <= limit <= 200
             or int(limit) != limit or len(cpr) != 2
             or any(type(c) is not int or not 0 < c <= 1000000 for c in cpr)
@@ -20,6 +24,7 @@ def evaluate(rows, rpm, limit, cpr):
     # and filtered speed to an equivalent common reference of 6000 CPR.
     # This produces RPM numerically, without claiming an autotune score.
     normalized = []
+    profile = hold_target if hold else bench.target_at
     for row in rows:
         if len(row) != len(bench.FIELDS):
             raise ValueError('Malformed RPM trace')
@@ -29,25 +34,33 @@ def evaluate(rows, rpm, limit, cpr):
             raise ValueError('Encoder speed exceeds counts/10ms envelope')
         data = list(row)
         for target_i, speed_i, count in ((3, 5, cpr[0]), (4, 6, cpr[1])):
-            expected = bench.target_at(row[0], rpm) * count / 6000
+            expected = profile(row[0], rpm) * count / 6000
             if abs(row[target_i] - expected) > .00015:
                 raise ValueError('RPM target conversion does not match calibration')
-            data[target_i] = bench.target_at(row[0], rpm)
+            data[target_i] = profile(row[0], rpm)
             data[speed_i] = row[speed_i] * 6000 / count
         normalized.append(data)
-    bench.validate_trace(normalized, rpm, limit)
-    plateau = [r for r in normalized if 2200 <= r[0] < 3000]
+    bench.validate_trace(normalized, rpm, limit, target_profile=profile)
+    start, end = (2000, 4500) if hold else (2200, 3000)
+    plateau = [r for r in normalized if start <= r[0] < end]
     means = [sum(r[i] for r in plateau) / len(plateau) for i in (5, 6)]
     mismatch = sum(abs(r[5] - r[6]) for r in plateau) / len(plateau)
     target_errors = [sum(abs(r[i] - rpm) for r in plateau) / len(plateau) for i in (5, 6)]
     matched = mismatch <= .05 * rpm and max(target_errors) <= .1 * rpm
+    deviations = [(sum((r[i] - mean) ** 2 for r in plateau) / len(plateau)) ** .5
+                  for i, mean in zip((5, 6), means)]
+    smooth = max(deviations) <= .1 * rpm
     return {'trace_valid': True, 'matched_in_final_plateau': matched,
+            'smooth_in_final_plateau': smooth, 'matched_and_smooth': matched and smooth,
             'requested_rpm': rpm, 'wheel_cpr_reference': list(cpr),
             'measurement_basis': 'manual_cpr_reference; not independent tachometer verification',
-            'plateau_ms': [2200, 3000], 'mean_rpm_left': means[0], 'mean_rpm_right': means[1],
+            'profile': 'hold' if hold else 'step', 'plateau_ms': [start, end],
+            'mean_rpm_left': means[0], 'mean_rpm_right': means[1],
+            'rpm_standard_deviation': deviations,
             'mean_absolute_rpm_difference': mismatch,
             'mean_absolute_target_error_rpm': target_errors,
-            'criteria': {'mean_absolute_difference_fraction': .05, 'each_target_error_fraction': .1}}
+            'criteria': {'mean_absolute_difference_fraction': .05, 'each_target_error_fraction': .1,
+                         'each_rpm_standard_deviation_fraction': .1}}
 
 
 def main():
@@ -55,6 +68,7 @@ def main():
     parser.add_argument('--port', required=True)
     parser.add_argument('--build-id', required=True)
     parser.add_argument('--rpm', type=float, default=20.)
+    parser.add_argument('--hold', action='store_true', help='Hold RPM for 4s instead of a speed-step profile')
     parser.add_argument('--cpr-left', type=int, default=1080)
     parser.add_argument('--cpr-right', type=int, default=1320)
     parser.add_argument('--sign-left', type=int, choices=(-1, 1), default=1)
@@ -78,7 +92,8 @@ def main():
         parser.error(str(exc))
     folder = args.output / ('match_' + datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
     folder.mkdir(parents=True, exist_ok=False)
-    result = {'source': 'fixed_gain_rpm_check', 'build_id': args.build_id,
+    result = {'source': 'fixed_gain_rpm_hold_check' if args.hold else 'fixed_gain_rpm_check',
+              'profile': 'hold' if args.hold else 'step', 'build_id': args.build_id,
               'rpm': args.peak, 'pwm_limit': args.pwm_limit,
               'gains': [args.kp_left, args.ki_left, args.kp_right, args.ki_right],
               'cpr': [args.cpr_left, args.cpr_right]}
@@ -87,12 +102,12 @@ def main():
     try:
         board = bench.Board(args.port, folder)
         board.firmware_info = ('ELC_INC_PI_V1', args.build_id)
-        rows = board.run(args, wheel_cpr=(args.cpr_left, args.cpr_right))
+        rows = board.run(args, wheel_cpr=(args.cpr_left, args.cpr_right), hold=args.hold)
         with (folder / 'trace.csv').open('w', newline='', encoding='utf-8') as stream:
             writer = csv.writer(stream)
             writer.writerow(bench.FIELDS)
             writer.writerows(rows)
-        result['evaluation'] = evaluate(rows, args.peak, args.pwm_limit, (args.cpr_left, args.cpr_right))
+        result['evaluation'] = evaluate(rows, args.peak, args.pwm_limit, (args.cpr_left, args.cpr_right), hold=args.hold)
         result['outcome'] = 'completed'
     except BaseException as exc:
         result.update(outcome='stopped_or_failed', error=str(exc))
@@ -119,7 +134,7 @@ def main():
         (folder / 'result.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
     print(json.dumps(dict(result, folder=str(folder)), indent=2))
     return 0 if (result.get('outcome') == 'completed' and result.get('stopped_and_quiet')
-                 and result.get('evaluation', {}).get('matched_in_final_plateau')) else 1
+                 and result.get('evaluation', {}).get('matched_and_smooth')) else 1
 
 
 if __name__ == '__main__':

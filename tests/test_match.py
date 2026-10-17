@@ -9,10 +9,10 @@ import bench
 import match
 
 
-def trace(equal_counts=False):
+def trace(equal_counts=False, hold=False):
     rows = []
     for t in range(0, 5501, 50):
-        rpm = bench.target_at(t, 20)
+        rpm = (match.hold_target if hold else bench.target_at)(t, 20)
         left, right = rpm * 1080 / 6000, rpm * 1320 / 6000
         speed_r = left if equal_counts else right
         pwm = 80 if rpm else 0
@@ -33,6 +33,36 @@ class FakeBoard(bench.Board):
 
 
 class MatchTests(unittest.TestCase):
+    def test_hold_and_step_profiles_cannot_be_confused(self):
+        result = match.evaluate(trace(hold=True), 20, 150, (1080, 1320), hold=True)
+        self.assertTrue(result['matched_and_smooth'])
+        self.assertEqual(result['plateau_ms'], [2000, 4500])
+        for rows, hold in ((trace(), True), (trace(hold=True), False)):
+            with self.assertRaises(ValueError):
+                match.evaluate(rows, 20, 150, (1080, 1320), hold=hold)
+
+    def test_equal_average_cannot_hide_speed_fluctuations(self):
+        rows = trace(hold=True)
+        for row in rows[40:45]:
+            row[5] *= 1.5
+            row[6] *= 1.5
+        result = match.evaluate(rows, 20, 150, (1080, 1320), hold=True)
+        self.assertTrue(result['matched_in_final_plateau'])
+        self.assertFalse(result['smooth_in_final_plateau'])
+        self.assertFalse(result['matched_and_smooth'])
+
+    def test_hold_protocol_ack(self):
+        board = FakeBoard('CAL MANUAL_REF_V1 1080 1320')
+        board.replies += ['STOPPED', 'STATUS 0 3 0 0 0 0 1', 'ARMED 1 1',
+                          'HOLDACK 1 2.000000 0.300000 2.000000 0.300000 20.0000 150',
+                          'STATUS 1 2 0 111 5500 0 0', 'BEGIN 1 111',
+                          *[','.join(map(str, row)) for row in trace(hold=True)], 'END']
+        args = SimpleNamespace(sign_left=1, sign_right=1, kp_left=2., ki_left=.3,
+                               kp_right=2., ki_right=.3, peak=20., pwm_limit=150)
+        rows = board.run(args, wheel_cpr=(1080, 1320), hold=True)
+        self.assertEqual(len(rows), 111)
+        self.assertTrue(any(c.startswith('HOLDRPM ') for c in board.sent))
+
     def test_equal_rpm_uses_different_count_speeds(self):
         result = match.evaluate(trace(), 20, 150, (1080, 1320))
         self.assertTrue(result['matched_in_final_plateau'])
