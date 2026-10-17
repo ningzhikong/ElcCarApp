@@ -12,6 +12,11 @@ typedef enum { GPIO_PIN_RESET = 0, GPIO_PIN_SET = 1 } GPIO_PinState;
 typedef int I2C_HandleTypeDef;
 #define GPIOA ((void *)1)
 #define GPIOB ((void *)2)
+#define GPIO_PIN_2 4u
+#define GPIO_MODE_INPUT 0u
+#define GPIO_PULLUP 1u
+typedef struct { uint32_t Pin, Mode, Pull, Speed; } GPIO_InitTypeDef;
+void HAL_GPIO_Init(void *port, GPIO_InitTypeDef *config);
 #define GPIO_PIN_5 32u
 #define GPIO_PIN_7 128u
 #define GPIO_PIN_11 2048u

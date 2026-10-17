@@ -54,7 +54,7 @@ if __name__ == '__main__':
                     str(ROOT / 'Core/Src/control_math.c'), str(ROOT / 'Core/Src/fsm.c'),
                     str(ROOT / 'tests/test_fsm.c'), '-lm', '-o', str(route)], check=True)
     route_scenarios = ('vision_default', 'vision_noise', 'marker', 'initial_marker', 'half_counts', 'lap', 'two_laps', 'short_lap', 'counter_wrap', 'acbd', 'line',
-                       'imu_init', 'imu_calibration', 'imu_read', 'imu_gap', 'adc', 'lost_line',
+                       'imu_init', 'imu_calibration', 'imu_read', 'imu_gap', 'lost_line',
                        'timeout0', 'timeout1', 'timeout2', 'timeout3', 'control_fault', 'ack_motion', 'manual_stop', 'rpm_units', 'ir_idle', 'ir_running',
                        'digital_polarity', 'digital_centroid')
     for scenario in route_scenarios:

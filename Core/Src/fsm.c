@@ -1,6 +1,5 @@
 #include "fsm.h"
 #ifndef CAR_HOST_TEST
-#include "adc.h"
 #include "usart.h"
 #include "oled.h"
 #include "i2c.h"
@@ -32,7 +31,7 @@ static uint8_t g_beep_event_count;
 static int64_t total_encoder_twice, lap_start_twice;
 static uint32_t peak_maintain_pulse;
 static bool is_on_peak, peak_event, peak_locked_out, is_straight_locked;
-static uint16_t gray_adc[8];
+static uint8_t gray_levels[8];
 static bool gray_valid;
 static uint32_t gray_tick;
 static float gray_error, current_yaw, target_straight_yaw, mpu_bias[3];
@@ -105,8 +104,16 @@ static bool initialize_imu(void)
 }
 void Car_System_Init(void)
 {
+    GPIO_InitTypeDef input = {0};
     Motor_Init();
     Control_ConfigureDriveRPM();
+    /* GANV PULL jumper must be installed before sensor power-on. One
+     * pull-up on the 4051 common pin biases the selected open-drain output.
+     * ADC initialization earlier in main configured PA2 analog; override it. */
+    input.Pin = GPIO_PIN_2;
+    input.Mode = GPIO_MODE_INPUT;
+    input.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(GPIOA, &input);
     line_pid.kp = ROUTE_LINE_KP;
     line_pid.kd = ROUTE_LINE_KD;
     line_pid.max_output = ROUTE_MAX_TURN_RPM;
@@ -116,9 +123,9 @@ void Car_System_Init(void)
     initialize_imu();
     Enter_Standby_State();
 }
-static bool GraySensor_Scan(void)
+static void GraySensor_Scan(void)
 {
-    uint16_t frame[8];
+    uint8_t frame[8];
     uint32_t sum = 0;
     float weighted = 0.0f;
     unsigned black = 0;
@@ -127,30 +134,27 @@ static bool GraySensor_Scan(void)
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, (i & 1u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, (i & 2u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, (i & 4u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-        for (volatile unsigned d = 0; d < 30; ++d) { }
-        if (HAL_ADC_Start(&hadc1) != HAL_OK) return false;
-        if (HAL_ADC_PollForConversion(&hadc1, 1u) != HAL_OK) {
-            HAL_ADC_Stop(&hadc1);
-            return false;
-        }
-        frame[i] = (uint16_t)HAL_ADC_GetValue(&hadc1);
-        if (HAL_ADC_Stop(&hadc1) != HAL_OK) return false;
+#ifndef CAR_HOST_TEST
+        /* Allow the weak pull-up and mux wiring to settle (100us/channel).
+         * DWT is started with TIM1 before the first foreground scan. */
+        uint32_t selected_at = DWT->CYCCNT;
+        while ((uint32_t)(DWT->CYCCNT - selected_at) < SystemCoreClock / 10000u) { }
+#endif
+        frame[i] = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_2) == GPIO_PIN_SET ? 1u : 0u;
         /* The module already thresholds gray internally: black is a low
          * digital output, white is high. Do not weight the white voltage. */
-        if (frame[i] <= ROUTE_GRAY_LINE) {
+        if (!frame[i]) {
             ++sum;
             weighted += (float)i - 3.5f;
             ++black;
         }
     }
-    /* Publish only complete frames. Failed scans cannot create marker edges. */
-    memcpy(gray_adc, frame, sizeof frame);
+    memcpy(gray_levels, frame, sizeof frame);
     gray_valid = true;
     gray_tick = HAL_GetTick();
     line_detected = black > 0u;
     gray_error = line_detected ? weighted / (float)sum : 0.0f;
-    is_on_peak = black >= 5u || (frame[3] <= ROUTE_GRAY_LINE && frame[4] <= ROUTE_GRAY_LINE);
-    return true;
+    is_on_peak = black >= 5u || (!frame[3] && !frame[4]);
 }
 static float wrap_yaw(float value)
 {
@@ -230,7 +234,7 @@ static void begin_run(uint32_t now)
     bool starts_on_mark;
     yaw_tick = now; /* Standby intentionally does not integrate yaw. */
     if (!update_yaw(now)) { fault_stop(FSM_FAULT_IMU); return; }
-    if (!GraySensor_Scan()) { fault_stop(FSM_FAULT_ADC); return; }
+    GraySensor_Scan();
     starts_on_mark = is_on_peak;
     reset_route(HAL_GetTick());
     suppress_initial_marker = starts_on_mark;
@@ -278,7 +282,8 @@ void FSM_KeyScan(void)
         Control_ReadView(&v);
         if (v.quiet_ticks < 30u || now - v.tick_ms > 30u ||
             v.raw_l != 0 || v.raw_r != 0) break;
-        if (!initialize_imu() || !GraySensor_Scan()) break;
+        if (!initialize_imu()) break;
+        GraySensor_Scan();
         /* Calibration can take a second: verify uninterrupted quiet again. */
         Control_ReadView(&v);
         if (v.quiet_ticks < 30u || HAL_GetTick() - v.tick_ms > 30u) break;
@@ -347,7 +352,7 @@ void FSM_ControlLoop_10ms(void)
     if (now - v.tick_ms > 30u) { fault_stop(FSM_FAULT_CONTROL); return; }
     total_encoder_twice += (int64_t)dl + dr;
     if (!update_yaw(now)) { fault_stop(FSM_FAULT_IMU); return; }
-    if (!GraySensor_Scan()) { fault_stop(FSM_FAULT_ADC); return; }
+    GraySensor_Scan();
     now = HAL_GetTick();
     update_marker(previous_peak, (uint32_t)(((dl < 0 ? -(int64_t)dl : dl) +
                                            (dr < 0 ? -(int64_t)dr : dr))), now);
@@ -379,8 +384,7 @@ void FSM_ControlLoop_10ms(void)
 void FSM_OLED_Update(void)
 {
     char text[32];
-    /* Running uses its existing scan; idle diagnostics must also be live.
-     * A failed idle scan is shown as unknown, never as a valid old pattern. */
+    /* Running uses its existing scan; idle diagnostics must also be live. */
     if (!running()) GraySensor_Scan();
     OLED_NewFrame();
     if (g_system_state == SYS_STATE_FAULT) {
@@ -406,7 +410,7 @@ void FSM_OLED_Update(void)
     OLED_PrintString(0, 32, "IR:12345678", &font16x16, OLED_COLOR_NORMAL);
     memcpy(text, "   ????????", 12u);
     if (gray_valid && HAL_GetTick() - gray_tick <= 100u) {
-        for (unsigned i = 0; i < 8; ++i) text[i + 3u] = gray_adc[i] > ROUTE_GRAY_LINE ? '1' : '0';
+        for (unsigned i = 0; i < 8; ++i) text[i + 3u] = gray_levels[i] ? '1' : '0';
     }
     OLED_PrintString(0, 48, text, &font16x16, OLED_COLOR_NORMAL);
     OLED_ShowFrame();

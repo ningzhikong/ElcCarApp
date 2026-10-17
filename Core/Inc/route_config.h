@@ -2,8 +2,7 @@
 #define CAR_ROUTE_CONFIG_H
 /* Initial PCB/track values; calibrate these against the physical course. */
 /* GANV parallel outputs through 74HC4051: white=high, black=low.
- * ADC only decodes the digital level; it is not an analog gray strength. */
-#define ROUTE_GRAY_LINE 2600u
+ * Sensor PULL jumper + PA2 pull-up input, not analog gray/ADC thresholds. */
 #define ROUTE_MARK_MIN_COUNTS 20u
 #define ROUTE_MARK_COOLDOWN_MS 500u
 #define ROUTE_LAP_MIN_COUNTS 3000u
