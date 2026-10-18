@@ -1,0 +1,16 @@
+.build/
+__pycache__/
+*.pyc
+tools/autotune/runs/
+MDK-ARM/*.uvguix.*
+MDK-ARM/*.uvoptx
+MDK-ARM/DebugConfig/
+MDK-ARM/ElcCarApp/
+MDK-ARM/*.lst
+.review_tmp/
+.workbuddy/
+
+# Code-only milestone: keep local documentation and regression tests out.
+*.[mM][dD]
+tests/
+Drivers/CMSIS/DSP/DSP_Lib_TestSuite/

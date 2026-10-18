@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kp_left": {"type": "number"},
+    "ki_left": {"type": "number"},
+    "kp_right": {"type": "number"},
+    "ki_right": {"type": "number"},
+    "stop": {"type": "boolean"},
+    "reason": {"type": "string"},
+    "expected_effect": {"type": "string"}
+  },
+  "required": ["kp_left", "ki_left", "kp_right", "ki_right", "stop", "reason", "expected_effect"]
+}
