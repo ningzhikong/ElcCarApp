@@ -32,7 +32,13 @@
 #include "control.h"
 #include "autotune.h"
 #include "serial_router.h"
+#include "route_config.h"
 #include <stdio.h>
+#ifdef CAR_GROUND_TEST
+#include "ground_test.h"
+#include "line_follow.h"
+#include "wheel_calibration.h"
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -63,6 +69,120 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#ifdef CAR_GROUND_TEST
+static void Ground_Run(void)
+{
+  uint32_t display_tick = 0u;
+  const char *labels[] = {"GROUND READY", "WAIT 3 SEC", "RUN STRAIGHT", "STOPPING", "DONE STOP", "CANCEL STOP", "FAULT STOP"};
+  Motor_Init();
+  OLED_Init();
+  Ground_Init();
+  Control_StartTimer();
+  while (1) {
+    Ground_Heartbeat();
+    if (HAL_GetTick() - display_tick >= 200u) {
+      GroundResult r;
+      ControlView v;
+      char text[24];
+      uint32_t saved = __get_PRIMASK();
+      __disable_irq();
+      r = ground_result;
+      __set_PRIMASK(saved);
+      display_tick = HAL_GetTick();
+      Control_ReadView(&v);
+      OLED_NewFrame();
+#ifdef CAR_GROUND_LINE
+      if (r.state == GROUND_READY) {
+        LineFrame f = Line_Describe((uint8_t)ground_ir.raw_levels, (uint8_t)ground_ir.levels, ground_ir.valid, ground_ir.noisy, ground_ir.tick_ms);
+        char *status = !ground_ir_direction ? "LINE MAP CHECK" : !f.valid ? "IR WARMUP" : f.noisy ? "IR NOISY" :
+                       !f.raw_black ? "NEED BLACK LINE" : f.raw_black > 4u ? "LINE TOO WIDE" :
+                       Line_Trackable(&f, HAL_GetTick(), 0) ? "LINE READY" : "WAIT IR STABLE";
+        OLED_PrintString(0, 0, status, &font16x16, OLED_COLOR_NORMAL);
+      } else if (r.state == GROUND_RUNNING)
+        OLED_PrintString(0, 0, "RUN LINE", &font16x16, OLED_COLOR_NORMAL);
+      else
+#endif
+      OLED_PrintString(0, 0, (char *)labels[r.state <= GROUND_FAULT ? r.state : GROUND_FAULT], &font16x16, OLED_COLOR_NORMAL);
+      if (r.state == GROUND_READY) snprintf(text, sizeof text, "HOLD START 1S");
+      else {
+        float target = .5f * (Wheel_CountsToRPM(v.target_l, CAR_WHEEL_CPR_LEFT) + Wheel_CountsToRPM(v.target_r, CAR_WHEEL_CPR_RIGHT));
+        snprintf(text, sizeof text, "RPM:%u MODE:STOP", (unsigned)(target + .5f));
+      }
+#ifdef CAR_GROUND_LINE
+      if (r.state == GROUND_READY) {
+        memcpy(text, "R:11111111 N:0", 15);
+        for (unsigned i = 0; i < 8; ++i) text[2+i] = (ground_ir.raw_levels & (1u << i)) ? '1' : '0';
+        text[13] = ground_ir.noisy ? '1' : '0';
+      }
+#endif
+      OLED_PrintString(0, 16, text, &font16x16, OLED_COLOR_NORMAL);
+      snprintf(text, sizeof text, "T:%lu N:%lu", (unsigned long)r.elapsed_ms, (unsigned long)r.count);
+#ifdef CAR_GROUND_LINE
+      memcpy(text, "IR:11111111", 12);
+      for (unsigned i = 0; i < 8; ++i) text[3+i] = ground_ir.valid ? ((ground_ir.levels & (1u << i)) ? '1' : '0') : '?';
+#endif
+      OLED_PrintString(0, 32, text, &font16x16, OLED_COLOR_NORMAL);
+      snprintf(text, sizeof text, "F:%lu Q:%lu", (unsigned long)r.reason, (unsigned long)v.quiet_ticks);
+      OLED_PrintString(0, 48, text, &font16x16, OLED_COLOR_NORMAL);
+      OLED_ShowFrame();
+    }
+    OLED_Poll();
+  }
+}
+#endif
+#ifdef CAR_IR_TEST
+/* Standalone digital test: no FSM, IMU, serial commands or control timer. */
+volatile uint8_t ir_test_levels[8];
+volatile uint8_t ir_test_raw[8];
+volatile uint8_t ir_test_changed;
+volatile uint32_t ir_test_frames, ir_test_select_errors;
+static void IR_Test_Run(void)
+{
+  GPIO_InitTypeDef input = {0};
+  char bits[9] = "11111111", text[24];
+  uint32_t display_tick = 0;
+  uint8_t previous[8] = {0};
+  input.Pin = GPIO_PIN_2;
+  input.Mode = GPIO_MODE_INPUT;
+  input.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOA, &input);
+  Motor_EmergencyStop();
+  OLED_Init();
+  while (1) {
+    for (unsigned i = 0; i < 8; ++i) {
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, (i & 1u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, (i & 2u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, (i & 4u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+      /* Slow diagnostic scan; keep display transfers progressing while held. */
+      uint32_t selected_at = HAL_GetTick();
+      while (HAL_GetTick() - selected_at < 100u) OLED_Poll();
+      unsigned selected = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_5) ? 1u : 0u)
+        | (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_12) ? 2u : 0u)
+        | (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_11) ? 4u : 0u);
+      if (selected != i) ++ir_test_select_errors;
+      ir_test_raw[i] = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_2) ? 1u : 0u;
+      ir_test_levels[i] = IR_NORMALIZE_LEVEL(ir_test_raw[i]);
+      bits[i] = ir_test_levels[i] ? '1' : '0';
+      if (ir_test_frames && previous[i] != ir_test_levels[i]) ir_test_changed |= (uint8_t)(1u << i);
+      previous[i] = ir_test_levels[i];
+      OLED_Poll();
+    }
+    ++ir_test_frames;
+    if (HAL_GetTick() - display_tick >= 200u) {
+      display_tick = HAL_GetTick();
+      OLED_NewFrame();
+      OLED_PrintString(0, 0, "IR TEST STOP", &font16x16, OLED_COLOR_NORMAL);
+      OLED_PrintString(0, 16, "CH:12345678", &font16x16, OLED_COLOR_NORMAL);
+      snprintf(text, sizeof text, "IN:%s", bits);
+      OLED_PrintString(0, 32, text, &font16x16, OLED_COLOR_NORMAL);
+      snprintf(text, sizeof text, "T:%02X E:%lu", (unsigned)ir_test_changed, (unsigned long)ir_test_select_errors);
+      OLED_PrintString(0, 48, text, &font16x16, OLED_COLOR_NORMAL);
+      OLED_ShowFrame();
+    }
+    OLED_Poll();
+  }
+}
+#endif
 
 /* USER CODE END 0 */
 
@@ -103,6 +223,12 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
+#ifdef CAR_GROUND_TEST
+  Ground_Run();
+#endif
+#ifdef CAR_IR_TEST
+  IR_Test_Run();
+#endif
   Autotune_SelectBootMode();
   if (HAL_ADCEx_Calibration_Start(&hadc1) != HAL_OK) Error_Handler();
   if (Autotune_IsEnabled()) Motor_Init();

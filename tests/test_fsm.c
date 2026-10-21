@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 int hadc1, hi2c1, hi2c2, huart1;
 const Font font16x16 = {0};
@@ -29,6 +30,7 @@ GPIO_PinState HAL_GPIO_ReadPin(void *p, uint16_t pin)
 {
     if (p == GPIOA && pin == GPIO_PIN_2) {
         assert(pullup_configured); ++ir_reads;
+        /* Fixture color: white=1. Board output is white high, black low. */
         return gray[mux] ? GPIO_PIN_SET : GPIO_PIN_RESET;
     }
     return key;
@@ -60,7 +62,7 @@ void Control_ReadView(ControlView *v) { *v = measured; }
 void Control_ClearFault(void) { measured.fault = 0; ++clears; }
 uint32_t Control_GetFault(void) { return measured.fault; }
 void Control_DriveRPM(float b, float t)
-{ assert(b == 10.0f && b - t > 0 && b + t <= 20.0f); base = b; turn = t; }
+{ assert(b >= 10.0f && b <= 15.0f && b - t > 0 && b + t <= 20.0f && b - t <= 20.0f); base = b; turn = t; }
 void Serial_StartVision(void) { receiving = 1; }
 void Serial_StopVision(void) { receiving = 0; }
 int HAL_UART_Transmit(void *h, uint8_t *data, uint16_t n, uint32_t timeout)
@@ -109,10 +111,13 @@ static void mark(unsigned gap, unsigned width)
     for (unsigned i = 0; i < gap; ++i) step(10);
     memset(gray, 0, sizeof gray);
     for (unsigned i = 0; i < width; ++i) step(10);
-    center(); step(10);
+    center(); for (unsigned i = 0; i < 3; ++i) step(10);
 }
 int main(int argc, char **argv)
 {
+#ifdef _WIN32
+    _set_error_mode(_OUT_TO_STDERR);
+#endif
     assert(argc == 2); center();
     if (!strcmp(argv[1], "imu_init")) init_error = 1;
     if (!strcmp(argv[1], "imu_calibration")) calibration_error = 1;
@@ -123,24 +128,28 @@ int main(int argc, char **argv)
     Car_System_Init();
     if (!strcmp(argv[1], "digital_polarity")) {
         start('R', '1'); unsigned before = beeps;
+        mark(25, 5); assert(beeps == before + 1);
+        /* Leave the IMU bridge interval before checking line loss. */
+        center(); for (unsigned i = 0; i < 60; ++i) step(10);
         white();
-        for (unsigned i = 0; i < 25; ++i) step(10);
-        assert(beeps == before && g_system_state == SYS_STATE_RUN_ABCD);
-        center(); step(10);
-        assert(beeps == before && g_fsm_fault == FSM_FAULT_NONE);
-        mark(0, 5); assert(beeps == before + 1);
+        step(10);
+        assert(beeps == before + 2 && g_system_state == SYS_STATE_FAULT && g_fsm_fault == FSM_FAULT_LINE_LOST);
     } else if (!strcmp(argv[1], "digital_centroid")) {
         start('R', '1'); step(10);
         white(); gray[2] = gray[4] = 0; step(10);
         /* Center (-1.5 + 0.5)/2 = -0.5, same as the starting line. */
-        assert(fabsf(turn + 2.0f) < .0001f);
+        assert(fabsf(turn - 1.0f) < .0001f);
     } else if (!strcmp(argv[1], "ir_idle")) {
         for (unsigned i = 0; i < 8; ++i) gray[i] = i % 2;
+        for (unsigned i = 0; i < 3; ++i) step(0);
         FSM_OLED_Update(); assert(!strcmp(ir_pattern, "01010101"));
-        assert(ir_reads == 8 && pullup_configured == 1);
+        assert(ir_reads == 24 && pullup_configured == 1);
         assert(base == 0 && g_system_state == SYS_STATE_STANDBY);
-        memset(gray, 0, sizeof gray); FSM_OLED_Update(); assert(!strcmp(ir_pattern, "00000000"));
+        memset(gray, 0, sizeof gray);
+        for (unsigned i = 0; i < 3; ++i) step(0);
+        FSM_OLED_Update(); assert(!strcmp(ir_pattern, "00000000"));
         white();
+        for (unsigned i = 0; i < 3; ++i) step(0);
         FSM_OLED_Update(); assert(!strcmp(ir_pattern, "11111111"));
     } else if (!strcmp(argv[1], "ir_running")) {
         start('R', '1'); step(1);
@@ -148,12 +157,31 @@ int main(int argc, char **argv)
         assert(!strcmp(ir_pattern, "11101111") && g_system_state == SYS_STATE_RUN_ABCD);
         assert(ir_reads == before);
         now += 101; FSM_OLED_Update(); assert(!strcmp(ir_pattern, "????????"));
+    } else if (!strcmp(argv[1], "marker_noise")) {
+        start('R', '1');
+        for (unsigned i = 0; i < 30; ++i) step(10);
+        memset(gray, 0, sizeof gray);
+        for (unsigned i = 0; i < 5; ++i) step(10);
+        for (unsigned i = 0; i < 6; ++i) { gray[0] = i % 2; step(10); }
+        assert(g_fsm_fault == FSM_FAULT_LINE_LOST && g_system_state == SYS_STATE_FAULT && base == 0);
+    } else if (!strcmp(argv[1], "centered_speed")) {
+        start('R', '1');
+        unsigned before = beeps;
+        white(); gray[3] = gray[4] = 0;
+        for (unsigned i = 0; i < 400; ++i) step(10);
+        assert(base == 15 && fabsf(turn) < .001f && beeps == before && g_current_laps == 0);
+        assert(g_system_state == SYS_STATE_RUN_ABCD && g_fsm_fault == FSM_FAULT_NONE);
+        gray[3] = gray[4] = 1; gray[0] = 0;
+        for (unsigned i = 0; i < 30; ++i) step(10);
+        assert(base == 10 && turn == 4 && g_fsm_fault == FSM_FAULT_NONE);
+        white(); step(10);
+        assert(base == 0 && g_fsm_fault == FSM_FAULT_LINE_LOST);
     } else if (!strcmp(argv[1], "rpm_units")) {
         assert(configured_rpm == 1 && base == 0);
         start('R', '1'); step(1);
         measured.speed_l = 1.8f; measured.speed_r = 2.2f;
         FSM_ControlLoop_10ms();
-        assert(fabsf(speed_L - 10) < .0001f && fabsf(speed_R - 10) < .0001f && base == 10);
+        assert(fabsf(speed_L - 10) < .0001f && fabsf(speed_R - 10) < .0001f && base >= 10 && base <= 15);
         FSM_OLED_Update(); assert(shown_rpm);
         press(); assert(base == 0);
     } else if (!strcmp(argv[1], "vision_default")) {
@@ -203,9 +231,10 @@ int main(int argc, char **argv)
     } else if (!strcmp(argv[1], "line")) {
         start('B', '1'); mark(75, 5);
         assert(g_acbd_phase == ACBD_LINE_TO_B);
-        white(); gray[0] = 0; step(10);
-        float left = turn; gray[0] = 1; gray[7] = 0; step(10);
-        assert(left < 0 && turn > 0);
+        for (unsigned i = 0; i < 25; ++i) step(10);
+        white(); gray[0] = 0; for (unsigned i = 0; i < 3; ++i) step(10);
+        float left = turn; gray[0] = 1; gray[7] = 0; for (unsigned i = 0; i < 3; ++i) step(10);
+        assert(left > 0 && turn < 0);
     } else if (!strcmp(argv[1], "lost_line")) {
         start('R', '1'); white();
         for (unsigned i = 0; i < 45; ++i) step(10);

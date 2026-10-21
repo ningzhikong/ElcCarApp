@@ -11,6 +11,7 @@
 #include "serial_router.h"
 #include "route_config.h"
 #include "wheel_calibration.h"
+#include "line_follow.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
@@ -31,12 +32,15 @@ static uint8_t g_beep_event_count;
 static int64_t total_encoder_twice, lap_start_twice;
 static uint32_t peak_maintain_pulse;
 static bool is_on_peak, peak_event, peak_locked_out, is_straight_locked;
+static bool marker_collecting, marker_confirmed;
 static uint8_t gray_levels[8];
 static bool gray_valid;
 static uint32_t gray_tick;
-static float gray_error, current_yaw, target_straight_yaw, mpu_bias[3];
-static bool line_detected, mpu_ready;
-static Turn_PID_t line_pid, heading_pid;
+static float current_yaw, target_straight_yaw, mpu_bias[3];
+static bool mpu_ready;
+static Turn_PID_t heading_pid;
+static LineSensor line_sensor;
+static LineController line_controller;
 static int previous_steering = -1;
 static volatile uint8_t uart_rx_idx;
 static char uart_rx_first;
@@ -77,9 +81,10 @@ static void reset_route(uint32_t now)
     g_current_laps = g_beep_event_count = 0;
     peak_maintain_pulse = 0;
     is_on_peak = peak_event = peak_locked_out = is_straight_locked = false;
+    marker_collecting = marker_confirmed = false;
     suppress_initial_marker = false;
     previous_steering = -1;
-    line_pid.err = line_pid.err_last = line_pid.output = 0.0f;
+    LineController_Reset(&line_controller);
     heading_pid.err = heading_pid.err_last = heading_pid.output = 0.0f;
     phase_tick = line_seen_tick = now;
     g_acbd_phase = ACBD_TO_C;
@@ -114,9 +119,7 @@ void Car_System_Init(void)
     input.Mode = GPIO_MODE_INPUT;
     input.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(GPIOA, &input);
-    line_pid.kp = ROUTE_LINE_KP;
-    line_pid.kd = ROUTE_LINE_KD;
-    line_pid.max_output = ROUTE_MAX_TURN_RPM;
+    LineSensor_Reset(&line_sensor);
     heading_pid.kp = ROUTE_HEADING_KP;
     heading_pid.kd = ROUTE_HEADING_KD;
     heading_pid.max_output = ROUTE_MAX_TURN_RPM;
@@ -125,11 +128,8 @@ void Car_System_Init(void)
 }
 static void GraySensor_Scan(void)
 {
-    uint8_t frame[8];
-    uint32_t sum = 0;
-    float weighted = 0.0f;
-    unsigned black = 0;
-    gray_valid = false;
+    uint8_t raw_levels = 0u;
+    if (line_sensor.filter.seen && HAL_GetTick() - line_sensor.frame.tick_ms < CONTROL_PERIOD_MS) return;
     for (unsigned i = 0; i < 8; ++i) {
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, (i & 1u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, (i & 2u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
@@ -140,21 +140,14 @@ static void GraySensor_Scan(void)
         uint32_t selected_at = DWT->CYCCNT;
         while ((uint32_t)(DWT->CYCCNT - selected_at) < SystemCoreClock / 10000u) { }
 #endif
-        frame[i] = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_2) == GPIO_PIN_SET ? 1u : 0u;
-        /* The module already thresholds gray internally: black is a low
-         * digital output, white is high. Do not weight the white voltage. */
-        if (!frame[i]) {
-            ++sum;
-            weighted += (float)i - 3.5f;
-            ++black;
-        }
+        uint8_t raw = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_2) == GPIO_PIN_SET ? 1u : 0u;
+        if (IR_NORMALIZE_LEVEL(raw)) raw_levels |= (uint8_t)(1u << i);
     }
-    memcpy(gray_levels, frame, sizeof frame);
-    gray_valid = true;
+    LineSensor_Update(&line_sensor, raw_levels, HAL_GetTick());
+    for (unsigned i = 0; i < 8; ++i) gray_levels[i] = (line_sensor.frame.levels & (1u << i)) != 0u;
+    gray_valid = line_sensor.frame.valid && !line_sensor.frame.noisy;
     gray_tick = HAL_GetTick();
-    line_detected = black > 0u;
-    gray_error = line_detected ? weighted / (float)sum : 0.0f;
-    is_on_peak = black >= 5u || (!frame[3] && !frame[4]);
+    is_on_peak = line_sensor.frame.marker;
 }
 static float wrap_yaw(float value)
 {
@@ -172,26 +165,38 @@ static bool update_yaw(uint32_t now)
     yaw_tick = now;
     return true;
 }
-static void update_marker(bool previous_peak, uint32_t distance, uint32_t now)
+static void update_marker(uint32_t distance, uint32_t now)
 {
+    bool candidate = gray_valid && line_sensor.frame.raw_black >= ROUTE_MARK_MIN_BLACK;
     peak_event = false;
-    if (suppress_initial_marker) {
-        if (!is_on_peak) suppress_initial_marker = false;
+    if (!gray_valid) {
         peak_maintain_pulse = 0;
+        marker_collecting = marker_confirmed = false;
+        return; /* Invalid data cannot be mistaken for a marker's exit. */
+    }
+    if (suppress_initial_marker) {
+        if (!candidate && !is_on_peak) suppress_initial_marker = false;
+        peak_maintain_pulse = 0;
+        marker_collecting = marker_confirmed = false;
         return;
     }
-    if (is_on_peak) {
-        if (!previous_peak) peak_maintain_pulse = 0;
+    if (candidate) {
+        if (!marker_collecting) peak_maintain_pulse = 0;
+        marker_collecting = true;
+        if (is_on_peak) marker_confirmed = true;
+        /* Count travel from the raw leading edge, but require a debounced
+         * marker before accepting it; filtering must not discard distance. */
         if (peak_maintain_pulse < ROUTE_MARK_MIN_COUNTS * 2u)
             peak_maintain_pulse += distance;
-    } else if (previous_peak) {
-        if (peak_maintain_pulse >= ROUTE_MARK_MIN_COUNTS * 2u &&
+    } else if (marker_collecting) {
+        if (marker_confirmed && peak_maintain_pulse >= ROUTE_MARK_MIN_COUNTS * 2u &&
             (!peak_locked_out || now - peak_lockout_tick >= ROUTE_MARK_COOLDOWN_MS)) {
             peak_event = true;
             peak_lockout_tick = now;
             peak_locked_out = true;
         }
         peak_maintain_pulse = 0;
+        marker_collecting = marker_confirmed = false;
     }
 }
 static bool record_marker(uint32_t now)
@@ -217,17 +222,22 @@ static bool record_marker(uint32_t now)
 }
 static void drive(float base, bool heading)
 {
-    Turn_PID_t *pid = heading ? &heading_pid : &line_pid;
-    float turn, cap = base * 0.8f;
     if (previous_steering != (int)heading) {
-        pid->err = pid->err_last = pid->output = 0.0f;
+        heading_pid.err = heading_pid.err_last = heading_pid.output = 0.0f;
+        LineController_Reset(&line_controller);
         previous_steering = heading;
     }
-    turn = heading ? PID_Positional_Calc(pid, 0.0f, -wrap_yaw(target_straight_yaw - current_yaw)) :
-                     PID_Positional_Calc(pid, 0.0f, -gray_error);
-    if (turn > cap) turn = cap;
-    if (turn < -cap) turn = -cap;
-    Control_DriveRPM(base, turn);
+    if (heading) {
+        float turn = PID_Positional_Calc(&heading_pid, 0.0f, -wrap_yaw(target_straight_yaw - current_yaw));
+        /* Preserve conservative IMU-only route speed; scheduling is line-only. */
+        Control_DriveRPM(ROUTE_LINE_SLOW_RPM, turn);
+    } else if (is_on_peak) {
+        LineController_Reset(&line_controller);
+        Control_DriveRPM(ROUTE_LINE_SLOW_RPM, 0.0f);
+    } else {
+        LineCommand command = LineController_Step(&line_controller, line_sensor.frame.error, HAL_GetTick(), IR_CHANNEL_DIRECTION, base);
+        Control_DriveRPM(command.base_rpm, command.turn_rpm);
+    }
 }
 static void begin_run(uint32_t now)
 {
@@ -322,7 +332,9 @@ void FSM_ControlLoop_10ms(void)
     ControlView v;
     uint32_t now = HAL_GetTick();
     int32_t dl, dr;
-    bool previous_peak = is_on_peak, heading;
+    bool heading;
+    /* Idle also scans at 10ms so a debounced frame exists before Start. */
+    GraySensor_Scan();
     Control_ReadView(&v);
     speed_L = Wheel_CountsToRPM(v.speed_l, CAR_WHEEL_CPR_LEFT);
     speed_R = Wheel_CountsToRPM(v.speed_r, CAR_WHEEL_CPR_RIGHT);
@@ -354,7 +366,7 @@ void FSM_ControlLoop_10ms(void)
     if (!update_yaw(now)) { fault_stop(FSM_FAULT_IMU); return; }
     GraySensor_Scan();
     now = HAL_GetTick();
-    update_marker(previous_peak, (uint32_t)(((dl < 0 ? -(int64_t)dl : dl) +
+    update_marker((uint32_t)(((dl < 0 ? -(int64_t)dl : dl) +
                                            (dr < 0 ? -(int64_t)dr : dr))), now);
     if (now - phase_tick >= ROUTE_PHASE_TIMEOUT_MS) { fault_stop(FSM_FAULT_ROUTE_TIMEOUT); return; }
     if (g_system_state == SYS_STATE_RUN_ABCD) {
@@ -377,15 +389,21 @@ void FSM_ControlLoop_10ms(void)
         }
         heading = g_acbd_phase == ACBD_TO_C || g_acbd_phase == ACBD_TO_D;
     }
-    if (line_detected || heading) line_seen_tick = now;
-    else if (now - line_seen_tick >= ROUTE_LINE_LOST_MS) { fault_stop(FSM_FAULT_LINE_LOST); return; }
+    if (heading || Line_Trackable(&line_sensor.frame, now, 1)) line_seen_tick = now;
+    else {
+        Control_Stop(); LineController_Reset(&line_controller);
+        /* Stop output while a wide marker/edge settles; never drive blind.
+         * Raw all-white, invalid or noisy data faults immediately. */
+        if (!gray_valid || !line_sensor.frame.raw_black || now - line_seen_tick >= ROUTE_LINE_LOST_MS)
+            fault_stop(FSM_FAULT_LINE_LOST);
+        return;
+    }
     drive(g_system_state == SYS_STATE_RUN_ABCD ? ROUTE_ABCD_RPM : ROUTE_ACBD_RPM, heading);
 }
 void FSM_OLED_Update(void)
 {
     char text[32];
-    /* Running uses its existing scan; idle diagnostics must also be live. */
-    if (!running()) GraySensor_Scan();
+    /* The 10ms foreground task owns sampling in every system state. */
     OLED_NewFrame();
     if (g_system_state == SYS_STATE_FAULT) {
         snprintf(text, sizeof text, "FAULT %u CTL:%lu", (unsigned)g_fsm_fault, (unsigned long)Control_GetFault());

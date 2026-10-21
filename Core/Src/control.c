@@ -5,6 +5,9 @@
 #include "autotune.h"
 #include "wheel_calibration.h"
 #include "drive_config.h"
+#ifdef CAR_GROUND_TEST
+#include "ground_test.h"
+#endif
 #include <string.h>
 
 Speed_PID_t pid_L, pid_R;
@@ -390,6 +393,9 @@ void Control_TimerIRQ(void)
         ++current.late_ticks;
         if (drive_enabled) Control_LatchFault(CONTROL_FAULT_TIMING);
     }
+#ifdef CAR_GROUND_TEST
+    Ground_BeforeControl(now);
+#endif
     if (Autotune_IsEnabled()) Autotune_BeforeControl(now);
     if (drive_enabled && now - target_tick > 100u)
         Control_LatchFault(CONTROL_FAULT_STALE_TARGET);
@@ -413,6 +419,12 @@ void Control_TimerIRQ(void)
         TIM3->CCR3 = TIM3->CCR4 = 0u;
         current.pwm_l = current.pwm_r = 0.0f;
     }
+#ifdef CAR_GROUND_TEST
+    {
+        ControlView ground_snapshot = current;
+        Ground_AfterControl(&ground_snapshot);
+    }
+#endif
     if (Autotune_IsEnabled()) {
         ControlView snapshot = current;
         Autotune_AfterControl(&snapshot);

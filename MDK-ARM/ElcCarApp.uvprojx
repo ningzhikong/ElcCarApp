@@ -405,6 +405,11 @@
               <FilePath>..\Core\Src\fsm.c</FilePath>
             </File>
             <File>
+              <FileName>line_follow.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\line_follow.c</FilePath>
+            </File>
+            <File>
               <FileName>oled.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Core\Src\oled.c</FilePath>
