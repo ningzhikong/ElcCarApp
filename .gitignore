@@ -6,4 +6,8 @@ MDK-ARM/*.uvguix.*
 MDK-ARM/*.uvoptx
 MDK-ARM/ElcCarApp/
 .review_tmp/
-*.[mM][dD]
+
+# Local assistant state and generated IDE/debug output
+.workbuddy/
+MDK-ARM/DebugConfig/
+MDK-ARM/*.lst

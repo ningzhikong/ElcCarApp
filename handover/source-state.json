@@ -1,0 +1,10 @@
+{
+  "date": "2026-10-26",
+  "source_commit_before_handover": "e4d7e9395e100a79787b7db73df51e05390d0343",
+  "public_parent": "8bd0acacccb0a8f8bad0e559ce533a39f5bbc0c0",
+  "remote_branch": "codex/stage-20261018",
+  "control_source_changed_for_handover": false,
+  "regression": "213 C scenarios + 89 Python tests passed",
+  "archives": "manifest.json",
+  "external_media": "Original WeChat images/videos outside workspace are not collected"
+}
