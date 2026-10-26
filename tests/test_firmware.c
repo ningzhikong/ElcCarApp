@@ -1,5 +1,6 @@
 #include "autotune.h"
 #include "control_math.h"
+#include "drive_config.h"
 #include "wheel_calibration.h"
 #include <assert.h>
 #include <math.h>
@@ -227,7 +228,11 @@ int main(int argc, char **argv)
         }
     } else if (!strcmp(argv[1], "drive_profile") || !strcmp(argv[1], "drive_step") || !strcmp(argv[1], "drive_cancel")) {
         int hold = strcmp(argv[1], "drive_step") != 0;
-        exchange("DRIVEINFO\n", "DRIVEINFO ELC_DRIVE_RPM_V1 2.000000 1.000000 2.000000 1.000000 20.0000 150 1 1\n");
+        char info[128];
+        snprintf(info, sizeof info,
+                 "DRIVEINFO ELC_DRIVE_RPM_V1 2.000000 1.000000 2.000000 1.000000 %.4f 150 1 1\n",
+                 (double)CAR_DRIVE_MAX_RPM);
+        exchange("DRIVEINFO\n", info);
         arm(); clear_output();
         feed(hold ? "DRIVERPM 7 2 1 2 1 20 150\n" : "DRIVESTEP 7 2 1 2 1 20 150\n");
         assert(configured == 0);
@@ -247,9 +252,13 @@ int main(int argc, char **argv)
             assert(configured == 1);
         }
     } else if (!strcmp(argv[1], "drive_validation")) {
+        char over[64];
         arm();
         exchange("DRIVERPM 7 2 .8 2 1 20 150\n", "ERR DRIVE_PROFILE");
-        exchange("DRIVERPM 7 2 1 2 1 21 150\n", "ERR DRIVE_PROFILE");
+        /* One RPM past the configured drive ceiling must be refused. */
+        snprintf(over, sizeof over, "DRIVERPM 7 2 1 2 1 %u 150\n",
+                 (unsigned)(CAR_DRIVE_MAX_RPM + 1.0f));
+        exchange(over, "ERR DRIVE_PROFILE");
         exchange("DRIVESTEP 7 2 1 2 1 20 100\n", "ERR DRIVE_PROFILE");
         assert(configured == 0 && measured.pwm_l == 0);
     } else if (!strcmp(argv[1], "rpm_profile") || !strcmp(argv[1], "rpm_hold") || !strcmp(argv[1], "rpm_hold30") || !strcmp(argv[1], "rpm_hold90") || !strcmp(argv[1], "rpm_hold100") || !strcmp(argv[1], "rpm_hold130") || !strcmp(argv[1], "raw_trace")) {
@@ -309,7 +318,11 @@ int main(int argc, char **argv)
         exchange("RUNRPM 7 2 .3 2 .3 nan 100\n", "ERR GAINS");
         exchange("RUNRPM 7 2 .3 2 .3 131 100\n", "ERR GAINS");
         exchange("RUN 7 2 .3 2 .3 26 100\n", "ERR GAINS");
-        exchange("DRIVERPM 7 2 1 2 1 30 150\n", "ERR DRIVE_PROFILE");
+        /* One RPM past the configured drive ceiling must be refused. */
+        char over[64];
+        snprintf(over, sizeof over, "DRIVERPM 7 2 1 2 1 %u 150\n",
+                 (unsigned)(CAR_DRIVE_MAX_RPM + 1.0f));
+        exchange(over, "ERR DRIVE_PROFILE");
         exchange("RUNRPM 7 2 .3 2 .3 20 451\n", "ERR GAINS");
         exchange("HOLDRPM 7 2 .3 2 .3 5 100\n", "ERR RPM");
         assert(configured == 0 && measured.pwm_l == 0);

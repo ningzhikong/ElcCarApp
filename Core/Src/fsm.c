@@ -270,7 +270,9 @@ void FSM_KeyScan(void)
         uint8_t request[] = "START\r\n";
         g_system_state = SYS_STATE_VISION;
         vision_start_time = now;
-        g_vision_color = COLOR_BLUE;
+        /* No vision reply keeps COLOR_UNKNOWN, which selects RUN_ABCD.
+         * A 'B'/'R' byte during VISION overrides this default. */
+        g_vision_color = COLOR_UNKNOWN;
         g_target_laps = 1;
         uart_rx_idx = 0;
         blink_total_count = blink_cur_count = 0;

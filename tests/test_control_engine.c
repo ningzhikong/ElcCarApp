@@ -1,4 +1,6 @@
 #include "control.h"
+#include "drive_config.h"
+#include "wheel_calibration.h"
 #include "oled.h"
 #include <assert.h>
 #include <stdio.h>
@@ -116,8 +118,15 @@ int main(int argc, char **argv)
         assert(pid_L.max_output == 150 && pid_R.max_output == 150);
         Control_DriveRPM(10, 0); view = tick(10, 2, 2);
         assert(fabsf(view.target_l - 1.8f) < .00001f && fabsf(view.target_r - 2.2f) < .00001f);
-        Control_DriveRPM(15, 10); view = tick(10, 2, 2);
-        assert(fabsf(view.target_l - .72f) < .00001f && fabsf(view.target_r - 4.4f) < .00001f);
+        /* Peak must exceed the ceiling for the proportional scaling to apply. */
+        {
+            const float base = .75f * CAR_DRIVE_MAX_RPM;
+            const float turn = .50f * CAR_DRIVE_MAX_RPM;
+            const float scale = CAR_DRIVE_MAX_RPM / (base + turn);
+            Control_DriveRPM(base, turn); view = tick(10, 2, 2);
+            assert(fabsf(view.target_l - Wheel_RPMToCounts((base - turn) * scale, CAR_WHEEL_CPR_LEFT)) < .00001f);
+            assert(fabsf(view.target_r - Wheel_RPMToCounts(CAR_DRIVE_MAX_RPM, CAR_WHEEL_CPR_RIGHT)) < .00001f);
+        }
         Control_DriveRPM(0, 10); view = tick(10, 5, 5);
         assert(view.pwm_l == 0 && view.pwm_r == 0 && pid_L.err_last == 0);
         Control_Stop(); Control_ConfigurePI(2, 1, 2, 1, 150);
@@ -134,7 +143,8 @@ int main(int argc, char **argv)
     } else if (!strcmp(argv[1], "drive_invalid")) {
         Control_ConfigureDriveRPM();
         Control_SetWheelRPM(NAN, 10); assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
-        Control_ClearFault(); Control_SetWheelRPM(10, 21); assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
+        Control_ClearFault(); Control_SetWheelRPM(10, CAR_DRIVE_MAX_RPM + 1.0f);
+        assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
         Control_ClearFault(); Control_DriveRPM(10, INFINITY); assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
         Control_ClearFault(); Control_DriveRPM(-1, 0); assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
         Control_ClearFault(); Control_SetTargets(10, 10); assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);

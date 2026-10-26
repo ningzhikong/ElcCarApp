@@ -206,15 +206,24 @@ int main(int argc, char **argv)
 #endif
 #ifdef CAR_GROUND_LINE
         if (!strcmp(argv[1], "speed_plan")) {
-            for (unsigned i = 0; i < 300; ++i) tick(10, 2, 2, 1);
+            /* Tick counts are derived so the ramp actually saturates: a fixed
+             * count only reached the ceiling for the original 10->15 range. */
+            const unsigned ramp_ticks =
+                (unsigned)((ROUTE_LINE_FAST_RPM - ROUTE_LINE_SLOW_RPM) / ROUTE_LINE_ACCEL_RPM_S * 100.0f) + 50u;
+            const unsigned brake_ticks =
+                (unsigned)((ROUTE_LINE_FAST_RPM - ROUTE_LINE_SLOW_RPM) / ROUTE_LINE_DECEL_RPM_S * 100.0f) + 20u;
+            for (unsigned i = 0; i < ramp_ticks; ++i) tick(10, 2, 2, 1);
             ControlView v; Control_ReadView(&v);
-            assert(fabsf(Wheel_CountsToRPM(v.target_l, CAR_WHEEL_CPR_LEFT) - 15) < .0001f);
-            assert(fabsf(Wheel_CountsToRPM(v.target_r, CAR_WHEEL_CPR_RIGHT) - 15) < .0001f);
+            assert(fabsf(Wheel_CountsToRPM(v.target_l, CAR_WHEEL_CPR_LEFT) - ROUTE_LINE_FAST_RPM) < .0001f);
+            assert(fabsf(Wheel_CountsToRPM(v.target_r, CAR_WHEEL_CPR_RIGHT) - ROUTE_LINE_FAST_RPM) < .0001f);
             ir_levels = ground_ir_direction == 1 ? 0xfeu : 0x7fu;
-            for (unsigned i = 0; i < 30; ++i) tick(10, 2, 2, 1);
+            for (unsigned i = 0; i < brake_ticks; ++i) tick(10, 2, 2, 1);
             Control_ReadView(&v);
-            assert(fabsf(Wheel_CountsToRPM(v.target_l, CAR_WHEEL_CPR_LEFT) - 6) < .0001f);
-            assert(fabsf(Wheel_CountsToRPM(v.target_r, CAR_WHEEL_CPR_RIGHT) - 14) < .0001f);
+            /* Saturated at the floor with the turn clamped to its bound. */
+            assert(fabsf(Wheel_CountsToRPM(v.target_l, CAR_WHEEL_CPR_LEFT) -
+                         (ROUTE_LINE_SLOW_RPM - ROUTE_MAX_TURN_RPM)) < .0001f);
+            assert(fabsf(Wheel_CountsToRPM(v.target_r, CAR_WHEEL_CPR_RIGHT) -
+                         (ROUTE_LINE_SLOW_RPM + ROUTE_MAX_TURN_RPM)) < .0001f);
             stop_key = GPIO_PIN_RESET; idle(1);
         } else if (!strcmp(argv[1], "noise")) {
             for (unsigned i = 0; i < 6; ++i) { ir_levels = i % 2 ? 0xe7u : 0xe3u; tick(10, 2, 2, 1); }

@@ -23,8 +23,9 @@
 /* RPM at the wheel output. Conservative commissioning values; steering
  * gains now produce RPM, and still require track/load validation. */
 #define ROUTE_LINE_SLOW_RPM 10.0f
-#define ROUTE_LINE_FAST_RPM 15.0f
-#define ROUTE_LINE_ACCEL_RPM_S 2.0f
+#define ROUTE_LINE_FAST_RPM 40.0f
+/* 10 -> 40 RPM in 7s, so the ramp completes inside ROUTE_PHASE_TIMEOUT_MS. */
+#define ROUTE_LINE_ACCEL_RPM_S 4.286f
 #define ROUTE_LINE_DECEL_RPM_S 20.0f
 #define ROUTE_LINE_D_TAU_S 0.05f
 #define ROUTE_ABCD_RPM ROUTE_LINE_FAST_RPM

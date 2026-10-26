@@ -110,7 +110,7 @@ def build(keil, ir_test=False, ground_test=False, ground_line=False, imu_test=Fa
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--keil', type=Path, default=Path(r'D:\Keil'))
+    parser.add_argument('--keil', type=Path, default=Path(r'D:\app\keil5'))
     parser.add_argument('--ir-test', action='store_true', help='Build motor-disabled infrared diagnostic')
     parser.add_argument('--imu-test', action='store_true', help='Build motor-disabled IMU axis/sign diagnostic')
     parser.add_argument('--ground-test', action='store_true', help='Build standalone local-button ground test')

@@ -11,7 +11,7 @@
 #define CAR_DRIVE_MAX_RPM 130.0f
 #define CAR_DRIVE_PWM_LIMIT 450u
 #else
-#define CAR_DRIVE_MAX_RPM 20.0f
+#define CAR_DRIVE_MAX_RPM 40.0f
 #define CAR_DRIVE_PWM_LIMIT 150u
 #endif
 #endif

@@ -1,6 +1,8 @@
 /* Execute the production route state machine, with HAL devices replaced. */
 #include "fsm.h"
 #include "control.h"
+#include "drive_config.h"
+#include "route_config.h"
 #include "host_services.h"
 #include "serial_router.h"
 #include <assert.h>
@@ -62,7 +64,13 @@ void Control_ReadView(ControlView *v) { *v = measured; }
 void Control_ClearFault(void) { measured.fault = 0; ++clears; }
 uint32_t Control_GetFault(void) { return measured.fault; }
 void Control_DriveRPM(float b, float t)
-{ assert(b >= 10.0f && b <= 15.0f && b - t > 0 && b + t <= 20.0f && b - t <= 20.0f); base = b; turn = t; }
+{
+    /* Contract: each argument is bounded on its own; the sum may exceed the
+     * ceiling because Control_DriveRPM scales the pair proportionally. */
+    assert(b >= 0.0f && b <= CAR_DRIVE_MAX_RPM &&
+           t >= -CAR_DRIVE_MAX_RPM && t <= CAR_DRIVE_MAX_RPM);
+    base = b; turn = t;
+}
 void Serial_StartVision(void) { receiving = 1; }
 void Serial_StopVision(void) { receiving = 0; }
 int HAL_UART_Transmit(void *h, uint8_t *data, uint16_t n, uint32_t timeout)
@@ -165,15 +173,20 @@ int main(int argc, char **argv)
         for (unsigned i = 0; i < 6; ++i) { gray[0] = i % 2; step(10); }
         assert(g_fsm_fault == FSM_FAULT_LINE_LOST && g_system_state == SYS_STATE_FAULT && base == 0);
     } else if (!strcmp(argv[1], "centered_speed")) {
+        /* Tick counts derived so the ramp saturates at the configured bounds. */
+        const unsigned ramp_ticks =
+            (unsigned)((ROUTE_LINE_FAST_RPM - ROUTE_LINE_SLOW_RPM) / ROUTE_LINE_ACCEL_RPM_S * 100.0f) + 50u;
+        const unsigned brake_ticks =
+            (unsigned)((ROUTE_LINE_FAST_RPM - ROUTE_LINE_SLOW_RPM) / ROUTE_LINE_DECEL_RPM_S * 100.0f) + 20u;
         start('R', '1');
         unsigned before = beeps;
         white(); gray[3] = gray[4] = 0;
-        for (unsigned i = 0; i < 400; ++i) step(10);
-        assert(base == 15 && fabsf(turn) < .001f && beeps == before && g_current_laps == 0);
+        for (unsigned i = 0; i < ramp_ticks; ++i) step(10);
+        assert(base == ROUTE_LINE_FAST_RPM && fabsf(turn) < .001f && beeps == before && g_current_laps == 0);
         assert(g_system_state == SYS_STATE_RUN_ABCD && g_fsm_fault == FSM_FAULT_NONE);
         gray[3] = gray[4] = 1; gray[0] = 0;
-        for (unsigned i = 0; i < 30; ++i) step(10);
-        assert(base == 10 && turn == 4 && g_fsm_fault == FSM_FAULT_NONE);
+        for (unsigned i = 0; i < brake_ticks; ++i) step(10);
+        assert(base == ROUTE_LINE_SLOW_RPM && turn == ROUTE_MAX_TURN_RPM && g_fsm_fault == FSM_FAULT_NONE);
         white(); step(10);
         assert(base == 0 && g_fsm_fault == FSM_FAULT_LINE_LOST);
     } else if (!strcmp(argv[1], "rpm_units")) {
@@ -185,7 +198,8 @@ int main(int argc, char **argv)
         FSM_OLED_Update(); assert(shown_rpm);
         press(); assert(base == 0);
     } else if (!strcmp(argv[1], "vision_default")) {
-        press(); press(); assert(g_system_state == SYS_STATE_RUN_ACBD && g_target_laps == 1);
+        /* No vision reply leaves COLOR_UNKNOWN, which runs the ABCD route. */
+        press(); press(); assert(g_system_state == SYS_STATE_RUN_ABCD && g_target_laps == 1);
     } else if (!strcmp(argv[1], "vision_noise")) {
         press(); const char *message = "garbage6?5r\r\n";
         while (*message) FSM_VisionRxByte((uint8_t)*message++);
