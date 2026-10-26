@@ -1,0 +1,308 @@
+heading_direction: PASS
+heading_clamp_slew: PASS
+heading_damping: PASS
+heading_invalid: PASS
+heading_gap: PASS
+heading_wrap: PASS
+heading_reset: PASS
+line_follow_classification: PASS
+line_follow_direction: PASS
+line_follow_speed_plan: PASS
+line_follow_returning_pd: PASS
+line_follow_invalid: PASS
+line_follow_time_and_ceiling: PASS
+ground_filter: PASS
+ground_complete: PASS
+ground_wrap: PASS
+ground_boot_held: PASS
+ground_short_press: PASS
+ground_cancel: PASS
+ground_countdown_start: PASS
+ground_heartbeat: PASS
+ground_stall: PASS
+ground_direction: PASS
+ground_timing: PASS
+ground_stop: PASS
+ground_coasting: PASS
+ground_ramp: PASS
+ground_imu_init_fault: PASS
+ground_imu_init_fault: PASS
+ground_heading_fault: PASS
+ground_heading_fault: PASS
+ground_heading_fault: PASS
+ground_heading_direction: PASS
+ground_heading_fault: PASS
+ground_heading_reference: PASS
+ground_heading_scaling: PASS
+ground_filter: PASS
+ground_complete: PASS
+ground_wrap: PASS
+ground_boot_held: PASS
+ground_short_press: PASS
+ground_cancel: PASS
+ground_countdown_start: PASS
+ground_heartbeat: PASS
+ground_stall: PASS
+ground_direction: PASS
+ground_timing: PASS
+ground_stop: PASS
+ground_coasting: PASS
+ground_line_start_guard: PASS
+ground_line_start_guard: PASS
+ground_line_lost: PASS
+ground_line_wide: PASS
+ground_line_stale: PASS
+ground_steering: PASS
+ground_countdown_line_lost: PASS
+ground_noise: PASS
+ground_speed_plan: PASS
+ground_filter: PASS
+ground_complete: PASS
+ground_wrap: PASS
+ground_boot_held: PASS
+ground_short_press: PASS
+ground_cancel: PASS
+ground_countdown_start: PASS
+ground_heartbeat: PASS
+ground_stall: PASS
+ground_direction: PASS
+ground_timing: PASS
+ground_stop: PASS
+ground_coasting: PASS
+ground_line_start_guard: PASS
+ground_line_start_guard: PASS
+ground_line_lost: PASS
+ground_line_wide: PASS
+ground_line_stale: PASS
+ground_steering: PASS
+ground_countdown_line_lost: PASS
+ground_noise: PASS
+ground_speed_plan: PASS
+ground_line_start_guard: PASS
+math: PASS
+validation: PASS
+cancel_pending: PASS
+complete: PASS
+heartbeat: PASS
+direction: PASS
+stall: PASS
+stop_key: PASS
+uart_fault: PASS
+frame: PASS
+overflow: PASS
+slow_motion: PASS
+arm_expiry: PASS
+pending_expiry: PASS
+low_stall20: PASS
+low_stall50: PASS
+low_stall79: PASS
+no_motion: PASS
+sparse_motion: PASS
+jog_validation: PASS
+jog_cancel: PASS
+jog_expiry: PASS
+jog_complete: PASS
+jog_raw: PASS
+jog_key: PASS
+jog_uart: PASS
+jog_speed: PASS
+jog_control_fault: PASS
+jog_stop: PASS
+rpm_profile: PASS
+rpm_validation: PASS
+rpm_hold: PASS
+rpm_hold30: PASS
+raw_trace: PASS
+rpm_hold90: PASS
+rpm_hold100: PASS
+rpm_hold130: PASS
+raw_period_overflow: PASS
+hold15: PASS
+hold15_heartbeat: PASS
+hold15_stop: PASS
+hold15_validation: PASS
+drive_profile: PASS
+drive_step: PASS
+drive_validation: PASS
+drive_cancel: PASS
+control_sampling: PASS
+control_stale: PASS
+control_timing: PASS
+control_stop: PASS
+control_test_zero: PASS
+control_cycle_wrap: PASS
+control_invalid_target: PASS
+control_sign_change: PASS
+control_invalid_gains: PASS
+control_fractional_limit: PASS
+control_bench_pwm_boundary: PASS
+control_oled_busy: PASS
+control_oled_race: PASS
+control_oled_frame: PASS
+control_oled_error: PASS
+control_oled_busy_resume: PASS
+control_oled_init_busy: PASS
+control_oled_init_retry: PASS
+control_quiet: PASS
+control_motor_polarity: PASS
+control_jog_output: PASS
+control_jog_invalid: PASS
+control_rpm_feedback: PASS
+control_rpm_feedback_guard: PASS
+control_rpm_feedback_slow: PASS
+control_drive_rpm: PASS
+control_drive_windows: PASS
+control_drive_invalid: PASS
+control_drive_unconfigured: PASS
+control_drive_reconfigure: PASS
+control_drive_stall: PASS
+control_drive_direction: PASS
+control_drive_speed: PASS
+control_drive_stale: PASS
+control_drive_timing: PASS
+control_drive_sparse: PASS
+control_tuned_profile: PASS
+fsm_vision_default: PASS
+fsm_vision_noise: PASS
+fsm_marker: PASS
+fsm_initial_marker: PASS
+fsm_half_counts: PASS
+fsm_lap: PASS
+fsm_two_laps: PASS
+fsm_short_lap: PASS
+fsm_counter_wrap: PASS
+fsm_acbd: PASS
+fsm_line: PASS
+fsm_imu_init: PASS
+fsm_imu_calibration: PASS
+fsm_imu_read: PASS
+fsm_imu_gap: PASS
+fsm_lost_line: PASS
+fsm_timeout0: PASS
+fsm_timeout1: PASS
+fsm_timeout2: PASS
+fsm_timeout3: PASS
+fsm_control_fault: PASS
+fsm_ack_motion: PASS
+fsm_manual_stop: PASS
+fsm_rpm_units: PASS
+fsm_ir_idle: PASS
+fsm_ir_running: PASS
+fsm_digital_polarity: PASS
+fsm_digital_centroid: PASS
+fsm_centered_speed: PASS
+fsm_marker_noise: PASS
+mpu_init: PASS
+mpu_valid: PASS
+mpu_boundary: PASS
+mpu_partial: PASS
+mpu_missing: PASS
+mpu_moving: PASS
+mpu_vibration: PASS
+mpu_gravity: PASS
+mpu_too_short: PASS
+imu_diagnostic_stationary: PASS
+imu_diagnostic_left_y: PASS
+imu_diagnostic_left_x: PASS
+imu_diagnostic_negative: PASS
+imu_diagnostic_wrap: PASS
+imu_diagnostic_gap: PASS
+imu_diagnostic_read_error: PASS
+imu_diagnostic_nonfinite: PASS
+imu_diagnostic_init_error: PASS
+imu_diagnostic_calibration_error: PASS
+test_board_adapter_roundtrip (test_bench.BenchTests.test_board_adapter_roundtrip) ... ok
+test_c_trace_is_accepted (test_bench.BenchTests.test_c_trace_is_accepted) ... ok
+test_control_deadline_rejected (test_bench.BenchTests.test_control_deadline_rejected) ... ok
+test_decimated_raw_pulses_can_alias_without_a_dead_motor (test_bench.BenchTests.test_decimated_raw_pulses_can_alias_without_a_dead_motor) ... ok
+test_each_wheel_requires_measured_motion (test_bench.BenchTests.test_each_wheel_requires_measured_motion) ... ok
+test_fractional_counter_rejected (test_bench.BenchTests.test_fractional_counter_rejected) ... ok
+test_low_pwm_cap_cannot_hide_a_dead_encoder (test_bench.BenchTests.test_low_pwm_cap_cannot_hide_a_dead_encoder) ... ok
+test_missing_sample_rejected (test_bench.BenchTests.test_missing_sample_rejected) ... ok
+test_nonfinite_rejected (test_bench.BenchTests.test_nonfinite_rejected) ... ok
+test_output_limit_rejected (test_bench.BenchTests.test_output_limit_rejected) ... ok
+test_stopping_sample_checked (test_bench.BenchTests.test_stopping_sample_checked) ... ok
+test_unknown_firmware_cannot_start_search (test_bench.BenchTests.test_unknown_firmware_cannot_start_search) ... ok
+test_wrong_applied_gains_rejected (test_bench.BenchTests.test_wrong_applied_gains_rejected) ... ok
+test_wrong_profile_rejected (test_bench.BenchTests.test_wrong_profile_rejected) ... ok
+test_changed_controller_is_rejected (test_export_profile.ExportTests.test_changed_controller_is_rejected) ... ok
+test_dead_wheel_raw_trace_is_rejected (test_export_profile.ExportTests.test_dead_wheel_raw_trace_is_rejected) ... ok
+test_drift_or_partial_search_never_export (test_export_profile.ExportTests.test_drift_or_partial_search_never_export) ... ok
+test_duplicate_or_external_trace_is_rejected (test_export_profile.ExportTests.test_duplicate_or_external_trace_is_rejected) ... ok
+test_inconsistent_identity_or_gains_is_rejected (test_export_profile.ExportTests.test_inconsistent_identity_or_gains_is_rejected) ... ok
+test_mock_results_never_export (test_export_profile.ExportTests.test_mock_results_never_export) ... ok
+test_score_tampering_cannot_overwrite_existing_config (test_export_profile.ExportTests.test_score_tampering_cannot_overwrite_existing_config) ... ok
+test_summary_statistics_are_recomputed (test_export_profile.ExportTests.test_summary_statistics_are_recomputed) ... ok
+test_three_distinct_experiments_required (test_export_profile.ExportTests.test_three_distinct_experiments_required) ... ok
+test_verified_repeats_export_complete_envelope (test_export_profile.ExportTests.test_verified_repeats_export_complete_envelope) ... ok
+test_heading_trace_retains_signed_yaw_and_actual_differential (test_ground_board.GroundReadbackTests.test_heading_trace_retains_signed_yaw_and_actual_differential) ... ok
+test_line_mask_keeps_its_integer_layout (test_ground_board.GroundReadbackTests.test_line_mask_keeps_its_integer_layout) ... ok
+test_truncated_trace_rejected (test_ground_board.GroundReadbackTests.test_truncated_trace_rejected) ... ok
+test_equal_and_drifting_wheels (test_hold15.Hold15Tests.test_equal_and_drifting_wheels) ... ok
+test_host_deadline_without_done (test_hold15.Hold15Tests.test_host_deadline_without_done) ... ok
+test_missing_corrupt_or_overpowered_trace_rejected (test_hold15.Hold15Tests.test_missing_corrupt_or_overpowered_trace_rejected) ... ok
+test_protocol_completes_and_exports_both_traces (test_hold15.Hold15Tests.test_protocol_completes_and_exports_both_traces) ... ok
+test_wrong_capability_never_arms (test_hold15.Hold15Tests.test_wrong_capability_never_arms) ... ok
+test_all_axes_and_sign_preserved (test_imu_board.ImuBoardTests.test_all_axes_and_sign_preserved) ... ok
+test_invalid_timing_or_nonfinite_rejected (test_imu_board.ImuBoardTests.test_invalid_timing_or_nonfinite_rejected) ... ok
+test_wrong_image_or_partial_update_rejected (test_imu_board.ImuBoardTests.test_wrong_image_or_partial_update_rejected) ... ok
+test_forward_raw_pulse_exports_only_the_acknowledged_output (test_jog.JogTests.test_forward_raw_pulse_exports_only_the_acknowledged_output) ... ok
+test_missing_capability_cannot_arm (test_jog.JogTests.test_missing_capability_cannot_arm) ... ok
+test_raw_capability_or_signed_output_failure_never_arms (test_jog.JogTests.test_raw_capability_or_signed_output_failure_never_arms) ... ok
+test_single_pulse_is_diagnostic_only (test_jog.JogTests.test_single_pulse_is_diagnostic_only) ... ok
+test_wrong_build_cannot_arm (test_jog.JogTests.test_wrong_build_cannot_arm) ... ok
+test_30rpm_hold_roundtrip_and_limits (test_match.MatchTests.test_30rpm_hold_roundtrip_and_limits) ... ok
+test_90rpm_short_bench_uses_calibrated_targets_and_300_cap (test_match.MatchTests.test_90rpm_short_bench_uses_calibrated_targets_and_300_cap) ... ok
+test_bad_targets_and_stopping_output_rejected (test_match.MatchTests.test_bad_targets_and_stopping_output_rejected) ... ok
+test_cpr_mismatch_never_arms (test_match.MatchTests.test_cpr_mismatch_never_arms) ... ok
+test_dead_wheel_cannot_be_matched (test_match.MatchTests.test_dead_wheel_cannot_be_matched) ... ok
+test_equal_average_cannot_hide_speed_fluctuations (test_match.MatchTests.test_equal_average_cannot_hide_speed_fluctuations) ... ok
+test_equal_counts_is_not_equal_rpm (test_match.MatchTests.test_equal_counts_is_not_equal_rpm) ... ok
+test_equal_rpm_uses_different_count_speeds (test_match.MatchTests.test_equal_rpm_uses_different_count_speeds) ... ok
+test_extended_target_counts_are_bounded_before_arm (test_match.MatchTests.test_extended_target_counts_are_bounded_before_arm) ... ok
+test_high_rpm_protocol_and_output_limit (test_match.MatchTests.test_high_rpm_protocol_and_output_limit) ... ok
+test_hold_and_step_profiles_cannot_be_confused (test_match.MatchTests.test_hold_and_step_profiles_cannot_be_confused) ... ok
+test_hold_protocol_ack (test_match.MatchTests.test_hold_protocol_ack) ... ok
+test_normal_drive_contract_and_distinct_ack (test_match.MatchTests.test_normal_drive_contract_and_distinct_ack) ... ok
+test_normal_drive_mismatch_never_arms (test_match.MatchTests.test_normal_drive_mismatch_never_arms) ... ok
+test_raw_count_trace_cannot_enter_rpm_check (test_match.MatchTests.test_raw_count_trace_cannot_enter_rpm_check) ... ok
+test_rpm_protocol_roundtrip_and_ack_units (test_match.MatchTests.test_rpm_protocol_roundtrip_and_ack_units) ... ok
+test_rpm_unit_conversion_preserves_original_speed_guard (test_match.MatchTests.test_rpm_unit_conversion_preserves_original_speed_guard) ... ok
+test_wrong_feedback_estimator_cannot_arm (test_match.MatchTests.test_wrong_feedback_estimator_cannot_arm) ... ok
+test_output_survives_process_exit (test_owned_process.OwnedProcessTests.test_output_survives_process_exit) ... ok
+test_timeout_kills_only_owned_tree (test_owned_process.OwnedProcessTests.test_timeout_kills_only_owned_tree) ... ok
+test_coarse_and_raw_must_be_the_same_experiment (test_raw_trace.RawTraceTests.test_coarse_and_raw_must_be_the_same_experiment) ... ok
+test_complete_trace_replays_feedback_without_changing_score (test_raw_trace.RawTraceTests.test_complete_trace_replays_feedback_without_changing_score) ... ok
+test_export_checks_profile_and_sends_no_motion_command (test_raw_trace.RawTraceTests.test_export_checks_profile_and_sends_no_motion_command) ... ok
+test_missing_timing_and_output_errors_rejected (test_raw_trace.RawTraceTests.test_missing_timing_and_output_errors_rejected) ... ok
+test_raw_jog_rejects_wrong_side_or_nonconstant_output (test_raw_trace.RawTraceTests.test_raw_jog_rejects_wrong_side_or_nonconstant_output) ... ok
+test_wrong_estimator_rejected (test_raw_trace.RawTraceTests.test_wrong_estimator_rejected) ... ok
+test_acceleration_and_stop_are_scored (test_rpm_tune.RPMTuneTests.test_acceleration_and_stop_are_scored) ... ok
+test_coordinate_proposal_is_bounded_and_independent (test_rpm_tune.RPMTuneTests.test_coordinate_proposal_is_bounded_and_independent) ... ok
+test_each_repeat_covers_two_speeds_and_stops (test_rpm_tune.RPMTuneTests.test_each_repeat_covers_two_speeds_and_stops) ... ok
+test_fault_stops_and_does_not_retry (test_rpm_tune.RPMTuneTests.test_fault_stops_and_does_not_retry) ... ok
+test_report_gains_match_firmware_precision (test_rpm_tune.RPMTuneTests.test_report_gains_match_firmware_precision) ... ok
+test_report_preserves_rpm_contract (test_rpm_tune.RPMTuneTests.test_report_preserves_rpm_contract) ... ok
+test_right_wheel_can_be_tested_first (test_rpm_tune.RPMTuneTests.test_right_wheel_can_be_tested_first) ... ok
+test_score_uses_rpm_not_equal_counts (test_rpm_tune.RPMTuneTests.test_score_uses_rpm_not_equal_counts) ... ok
+test_validates_before_opening_hardware (test_rpm_tune.RPMTuneTests.test_validates_before_opening_hardware) ... ok
+test_zero_integral_requests_stop (test_rpm_tune.RPMTuneTests.test_zero_integral_requests_stop) ... ok
+test_accept_requires_confirmation (test_tune.TuneTests.test_accept_requires_confirmation) ... ok
+test_candidate_step_and_finite_values (test_tune.TuneTests.test_candidate_step_and_finite_values) ... ok
+test_drift_after_rollback_stops_search (test_tune.TuneTests.test_drift_after_rollback_stops_search) ... ok
+test_drift_stops_search_with_baseline_applied (test_tune.TuneTests.test_drift_stops_search_with_baseline_applied) ... ok
+test_failed_confirmation_rolls_back (test_tune.TuneTests.test_failed_confirmation_rolls_back) ... ok
+test_hardware_failure_never_starts_a_rollback_experiment (test_tune.TuneTests.test_hardware_failure_never_starts_a_rollback_experiment) ... ok
+test_malformed_candidate_file_is_rejected_before_motion (test_tune.TuneTests.test_malformed_candidate_file_is_rejected_before_motion) ... ok
+test_one_wheel_cannot_hide_regression (test_tune.TuneTests.test_one_wheel_cannot_hide_regression) ... ok
+test_provider_runs_only_after_port_closed (test_tune.TuneTests.test_provider_runs_only_after_port_closed) ... ok
+test_rejection_restores_baseline (test_tune.TuneTests.test_rejection_restores_baseline) ... ok
+test_repeated_candidate_and_rounding_rejected (test_tune.TuneTests.test_repeated_candidate_and_rounding_rejected) ... ok
+test_stop_cannot_apply_new_gains (test_tune.TuneTests.test_stop_cannot_apply_new_gains) ... ok
+test_zero_gain_step_is_bounded (test_tune.TuneTests.test_zero_gain_step_is_bounded) ... ok
+
+----------------------------------------------------------------------
+Ran 89 tests in 1.868s
+
+OK
+213 C host scenarios passed; hardware timing/IO not exercised.
