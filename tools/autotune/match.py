@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 
 import bench
+import raw_trace
 
 
 def hold_target(t, rpm):
@@ -15,10 +16,10 @@ def hold_target(t, rpm):
 
 
 def evaluate(rows, rpm, limit, cpr, hold=False):
-    if (not math.isfinite(rpm) or not 1 <= rpm <= 25 or not 20 <= limit <= 200
+    if (not math.isfinite(rpm) or not 1 <= rpm <= bench.RPM_BENCH_MAX or not 20 <= limit <= bench.RPM_BENCH_PWM_MAX
             or int(limit) != limit or len(cpr) != 2
             or any(type(c) is not int or not 0 < c <= 1000000 for c in cpr)
-            or any(not 1 <= rpm * c / 6000 <= 25 for c in cpr)):
+            or any(not 1 <= rpm * c / 6000 <= bench.RPM_BENCH_COUNTS_MAX for c in cpr)):
         raise ValueError('Invalid RPM experiment calibration or envelope')
     # Preserve all original raw/time/PWM checks; scale each wheel's target
     # and filtered speed to an equivalent common reference of 6000 CPR.
@@ -40,7 +41,8 @@ def evaluate(rows, rpm, limit, cpr, hold=False):
             data[target_i] = profile(row[0], rpm)
             data[speed_i] = row[speed_i] * 6000 / count
         normalized.append(data)
-    bench.validate_trace(normalized, rpm, limit, target_profile=profile)
+    bench.validate_trace(normalized, rpm, limit, target_profile=profile, peak_max=bench.RPM_BENCH_MAX,
+                         pwm_max=bench.RPM_BENCH_PWM_MAX, speed_max=100 * 6000 / min(cpr))
     start, end = (2000, 4500) if hold else (2200, 3000)
     plateau = [r for r in normalized if start <= r[0] < end]
     means = [sum(r[i] for r in plateau) / len(plateau) for i in (5, 6)]
@@ -67,8 +69,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', required=True)
     parser.add_argument('--build-id', required=True)
-    parser.add_argument('--rpm', type=float, default=20.)
+    parser.add_argument('--rpm', type=float, default=20., help='Wheel RPM; raised-wheel short bench maximum 130, normal drive maximum 20')
     parser.add_argument('--drive', action='store_true', help='Exercise fixed normal-drive RPM configuration/path')
+    parser.add_argument('--raw-10ms', action='store_true', help='Require and export complete 100Hz encoder/PWM trace after stopping')
     parser.add_argument('--hold', action=argparse.BooleanOptionalAction, default=True,
                         help='Hold RPM for 4s (default); --no-hold selects speed steps')
     parser.add_argument('--cpr-left', type=int, default=1080)
@@ -86,12 +89,12 @@ def main():
     if not re.fullmatch('[0-9a-f]{16}', args.build_id):
         parser.error('Expected a 16-character firmware build ID')
     try:
-        bench.validate_parameters(args)
+        bench.validate_parameters(args, peak_max=bench.RPM_BENCH_MAX, pwm_max=bench.RPM_BENCH_PWM_MAX)
         if args.drive and (args.peak > 20 or args.pwm_limit != 150 or
                            [args.kp_left, args.ki_left, args.kp_right, args.ki_right] != [2., 1., 2., 1.] or
                            (args.sign_left, args.sign_right) != (1, 1)):
             raise ValueError('Normal drive check must use compiled-in configuration')
-        if any(not 0 < c <= 1000000 or not 1 <= args.peak * c / 6000 <= 25
+        if any(not 0 < c <= 1000000 or not 1 <= args.peak * c / 6000 <= bench.RPM_BENCH_COUNTS_MAX
                for c in (args.cpr_left, args.cpr_right)):
             raise ValueError('RPM conversion exceeds encoder bench bounds')
     except ValueError as exc:
@@ -110,12 +113,24 @@ def main():
     board = None
     try:
         board = bench.Board(args.port, folder)
+        if args.raw_10ms:
+            board.send('RAWINFO')
+            if board.read() != raw_trace.CAPABILITY:
+                raise RuntimeError('Firmware lacks 10ms capture; refusing to ARM')
         board.firmware_info = ('ELC_INC_PI_V1', args.build_id)
         rows = board.run(args, wheel_cpr=(args.cpr_left, args.cpr_right), hold=args.hold, drive=args.drive)
         with (folder / 'trace.csv').open('w', newline='', encoding='utf-8') as stream:
             writer = csv.writer(stream)
             writer.writerow(bench.FIELDS)
             writer.writerows(rows)
+        if args.raw_10ms:
+            raw = raw_trace.capture(board, args.peak, hold=args.hold, drive=args.drive)
+            with (folder / 'raw_10ms.csv').open('w', newline='', encoding='utf-8') as stream:
+                writer = csv.writer(stream)
+                writer.writerow(raw_trace.FIELDS)
+                writer.writerows(raw)
+            result['raw_analysis'] = raw_trace.analyze(raw, rows, args.peak, args.pwm_limit,
+                                                     (args.cpr_left, args.cpr_right), hold=args.hold)
         result['evaluation'] = evaluate(rows, args.peak, args.pwm_limit, (args.cpr_left, args.cpr_right), hold=args.hold)
         result['outcome'] = 'completed'
     except BaseException as exc:

@@ -1,5 +1,6 @@
 """One bounded, single-wheel diagnostic pulse; never scores or tunes a motor."""
 import argparse
+import csv
 from datetime import datetime
 import json
 from pathlib import Path
@@ -7,6 +8,7 @@ import re
 import time
 
 import bench
+import raw_trace
 
 
 def run(board, args):
@@ -17,6 +19,12 @@ def run(board, args):
     board.send('INFO')
     if board.read() != f'INFO ELC_INC_PI_V1 {args.build_id}':
         raise RuntimeError('Firmware build does not match the requested build')
+    if getattr(args, 'raw_10ms', False):
+        if args.pwm <= 0:
+            raise ValueError('Raw diagnostic jog supports forward PWM only')
+        board.send('JOGRAWINFO')
+        if board.read() != raw_trace.JOG_CAPABILITY:
+            raise RuntimeError('Missing 100Hz jog capture; refusing to ARM')
     board.send('ENC')
     before = board.read()
     if len(before.split()) != 4 or not before.startswith('ENC '):
@@ -47,7 +55,10 @@ def run(board, args):
         raise TimeoutError('Jog did not finish')
     board.send('ENC')
     after = board.read()
-    return {'encoder_before': before, 'encoder_after': after, 'observations': observations}
+    result = {'encoder_before': before, 'encoder_after': after, 'observations': observations}
+    if getattr(args, 'raw_10ms', False):
+        result['raw_10ms'] = raw_trace.capture_jog(board, args.side, args.pwm, args.duration_ms)
+    return result
 
 
 def main():
@@ -57,12 +68,15 @@ def main():
     parser.add_argument('--side', choices=('left', 'right'), required=True)
     parser.add_argument('--pwm', type=int, default=100)
     parser.add_argument('--duration-ms', type=int, default=600)
+    parser.add_argument('--raw-10ms', action='store_true', help='Require complete 100Hz capture, forward pulses only')
     parser.add_argument('--output', type=Path, default=Path('.build/hardware_checks'))
     args = parser.parse_args()
     if not re.fullmatch('[0-9a-f]{16}', args.build_id):
         parser.error('build-id must be the expected 16-character firmware build ID')
     if not 1 <= abs(args.pwm) <= 150 or not 50 <= args.duration_ms <= 800 or args.duration_ms % 10:
         parser.error('PWM must be nonzero within +/-150; duration must be 50..800ms in 10ms steps')
+    if args.raw_10ms and args.pwm <= 0:
+        parser.error('100Hz jog capture supports forward PWM only')
     import serial
     folder = args.output / ('jog_' + datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
     folder.mkdir(parents=True)
@@ -78,6 +92,11 @@ def main():
         board.connection.open()
         board.connection.reset_input_buffer()
         result.update(run(board, args))
+        if args.raw_10ms:
+            with (folder / 'raw_10ms.csv').open('w', newline='', encoding='utf-8') as stream:
+                writer = csv.writer(stream)
+                writer.writerow(raw_trace.FIELDS)
+                writer.writerows(result.pop('raw_10ms'))
         result['outcome'] = 'completed'
     except BaseException as exc:
         result.update(outcome='stopped_or_failed', error=str(exc))
@@ -91,7 +110,7 @@ def main():
         board.connection.close()
         board.audit.close()
         (folder / 'result.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
-    print(json.dumps(result, indent=2))
+    print(json.dumps(dict(result, folder=str(folder)), indent=2))
     return 0 if result.get('outcome') == 'completed' and result.get('stopped_and_quiet') else 1
 
 

@@ -13,6 +13,8 @@
 #define HEARTBEAT_MS 1000u
 #define DURATION_MS 5500u
 #define SAMPLE_MS 50u
+#define LONG_DURATION_MS 16500u
+#define LONG_SAMPLE_MS 150u
 #define ARM_TIMEOUT_MS 5000u
 #ifndef CAR_BUILD_ID
 #define CAR_BUILD_ID "unidentified"
@@ -33,7 +35,7 @@
 typedef struct {
     uint32_t id;
     float kp_l, ki_l, kp_r, ki_r, peak, limit;
-    uint8_t rpm_mode, hold_mode;
+    uint8_t rpm_mode, hold_mode, long_hold;
 } RunConfig;
 typedef struct {
     uint32_t time_ms;
@@ -53,6 +55,26 @@ static int16_t pending_jog_l, pending_jog_r, jog_l, jog_r;
 static uint32_t pending_jog_ms, jog_ms;
 static uint8_t jog_active;
 static Sample trace[TRACE_CAPACITY];
+#ifndef CAR_GROUND_TEST
+/* Stopped-only export: do not transmit at 100Hz during control. Keep the
+ * legacy 50ms trace/protocol intact. Ground diagnostics have a separate log. */
+#define RAW_CAPACITY 552u
+#if AUTOTUNE_MAX_PWM > 999u
+#error Diagnostic output must fit the hardware PWM range
+#endif
+typedef struct {
+    uint16_t time_ms;
+    int16_t raw_l, raw_r;
+    uint16_t pwm_l, pwm_r, period_us;
+} RawSample;
+typedef char RawSampleSizeCheck[sizeof(RawSample) == 12u ? 1 : -1];
+static RawSample raw_trace[RAW_CAPACITY];
+static volatile uint32_t raw_count;
+static uint32_t raw_next;
+static int32_t raw_sum_l, raw_sum_r;
+static uint32_t raw_period_sum;
+static uint8_t raw_jog; /* 0: PI trace; 1: forward jog; 2: unsupported signed jog. */
+#endif
 static uint8_t rx_queue[256];
 static volatile uint16_t rx_head, rx_tail;
 
@@ -120,7 +142,7 @@ void Autotune_Init(void)
 
 static float target_at(uint32_t time_ms)
 {
-    if (time_ms < 500u || time_ms >= 4500u) return 0.0f;
+    if (time_ms < 500u || time_ms >= (active.long_hold ? 15500u : 4500u)) return 0.0f;
     if (active.hold_mode) return active.peak;
     if (time_ms < 1500u) return active.peak * 0.4f;
     if (time_ms < 3000u) return active.peak;
@@ -142,6 +164,11 @@ void Autotune_BeforeControl(uint32_t now_ms)
         jog_l = pending_jog_l; jog_r = pending_jog_r; jog_ms = pending_jog_ms;
         pending_run = 0u;
         count = elapsed = next_sample = 0u;
+#ifndef CAR_GROUND_TEST
+        raw_count = raw_next = 0u;
+        raw_sum_l = raw_sum_r = 0; raw_period_sum = 0u;
+        raw_jog = jog_active ? ((jog_l >= 0 && jog_r >= 0) ? 1u : 2u) : 0u;
+#endif
         stall_l = stall_r = wrong_ticks = 0u;
         no_motion_l = no_motion_r = 0u;
         fault = 0u;
@@ -154,7 +181,7 @@ void Autotune_BeforeControl(uint32_t now_ms)
             }
         }
         state = STATE_RUN;
-        ack_pending = jog_active ? 2u : (active.rpm_mode == 2u ? (active.hold_mode ? 5u : 6u) :
+        ack_pending = active.long_hold ? 7u : jog_active ? 2u : (active.rpm_mode == 2u ? (active.hold_mode ? 5u : 6u) :
                                        (active.hold_mode ? 4u : (active.rpm_mode ? 3u : 1u)));
     }
     if (state != STATE_RUN) return;
@@ -164,7 +191,7 @@ void Autotune_BeforeControl(uint32_t now_ms)
         finish(STATE_STOPPED, 0u);
     else if (now_ms - heartbeat_tick >= HEARTBEAT_MS)
         finish(STATE_FAULT, FAULT_HEARTBEAT);
-    else if (elapsed >= (jog_active ? jog_ms : DURATION_MS)) finish(STATE_DONE, 0u);
+    else if (elapsed >= (jog_active ? jog_ms : (active.long_hold ? LONG_DURATION_MS : DURATION_MS))) finish(STATE_DONE, 0u);
     else if (jog_active) Control_SetJogPWM(jog_l, jog_r);
     else {
         float target = target_at(elapsed);
@@ -211,7 +238,30 @@ void Autotune_AfterControl(const ControlView *v)
         }
     }
     if (state != STATE_RUN && state != STATE_DONE) return;
-    if (elapsed < next_sample || (state == STATE_DONE && next_sample > DURATION_MS)) return;
+#ifndef CAR_GROUND_TEST
+    /* The 15s profile sums every control tick into 30ms records. It does not
+     * discard encoder counts or change the 10ms controller/guard cadence. */
+    if (active.long_hold && raw_next <= LONG_DURATION_MS) {
+        raw_sum_l += v->raw_l; raw_sum_r += v->raw_r;
+        raw_period_sum += v->period_us;
+    }
+    if (raw_jog != 2u && elapsed >= raw_next && raw_next <= (active.long_hold ? LONG_DURATION_MS : DURATION_MS)) {
+        if (raw_count >= RAW_CAPACITY) { finish(STATE_FAULT, FAULT_TRACE); return; }
+        if ((active.long_hold ? raw_period_sum : v->period_us) > 65535u) {
+            finish(STATE_FAULT, FAULT_TRACE); return;
+        }
+        RawSample *r = &raw_trace[raw_count];
+        r->time_ms = (uint16_t)elapsed;
+        r->raw_l = (int16_t)(active.long_hold ? raw_sum_l : v->raw_l);
+        r->raw_r = (int16_t)(active.long_hold ? raw_sum_r : v->raw_r);
+        r->pwm_l = (uint16_t)v->pwm_l; r->pwm_r = (uint16_t)v->pwm_r;
+        r->period_us = (uint16_t)(active.long_hold ? raw_period_sum : v->period_us);
+        raw_sum_l = raw_sum_r = 0; raw_period_sum = 0u;
+        ++raw_count;
+        raw_next = elapsed + (active.long_hold ? 30u : CONTROL_PERIOD_MS);
+    }
+#endif
+    if (elapsed < next_sample || (state == STATE_DONE && next_sample > (active.long_hold ? LONG_DURATION_MS : DURATION_MS))) return;
     if (count >= TRACE_CAPACITY) {
         finish(STATE_FAULT, FAULT_TRACE);
         return;
@@ -226,7 +276,7 @@ void Autotune_AfterControl(const ControlView *v)
     s->flags = (v->pwm_l >= active.limit ? 1u : 0u) |
                (v->pwm_r >= active.limit ? 2u : 0u);
     ++count;
-    next_sample += SAMPLE_MS;
+    next_sample += active.long_hold ? LONG_SAMPLE_MS : SAMPLE_MS;
 }
 
 static int number(const char *token, float low, float high, float *result)
@@ -355,9 +405,10 @@ static void command(char *line)
         pending_run = 2u;
         __set_PRIMASK(saved);
     } else if (n == 8u && (!strcmp(tokens[0], "RUN") || !strcmp(tokens[0], "RUNRPM") ||
-                           !strcmp(tokens[0], "HOLDRPM") || !strcmp(tokens[0], "DRIVERPM") ||
+                           !strcmp(tokens[0], "HOLDRPM") || !strcmp(tokens[0], "HOLDRPM15") || !strcmp(tokens[0], "DRIVERPM") ||
                            !strcmp(tokens[0], "DRIVESTEP"))) {
-        config.hold_mode = !strcmp(tokens[0], "HOLDRPM") || !strcmp(tokens[0], "DRIVERPM");
+        config.long_hold = !strcmp(tokens[0], "HOLDRPM15");
+        config.hold_mode = config.long_hold || !strcmp(tokens[0], "HOLDRPM") || !strcmp(tokens[0], "DRIVERPM");
         config.rpm_mode = !strcmp(tokens[0], "DRIVERPM") || !strcmp(tokens[0], "DRIVESTEP") ? 2u :
                           (config.hold_mode || !strcmp(tokens[0], "RUNRPM"));
         if (!request_id(tokens[1], &config.id) ||
@@ -365,17 +416,20 @@ static void command(char *line)
             !number(tokens[3], 0.0f, 2.0f, &config.ki_l) ||
             !number(tokens[4], 0.0f, 10.0f, &config.kp_r) ||
             !number(tokens[5], 0.0f, 2.0f, &config.ki_r) ||
-            !number(tokens[6], 1.0f, 25.0f, &config.peak) ||
-            !number(tokens[7], 20.0f, 200.0f, &config.limit) ||
+            !number(tokens[6], 1.0f, config.rpm_mode ? AUTOTUNE_MAX_RPM : 25.0f, &config.peak) ||
+            !number(tokens[7], 20.0f, config.rpm_mode ? (float)AUTOTUNE_MAX_PWM : 200.0f, &config.limit) ||
             config.limit != (float)(unsigned)config.limit) {
             send_text("ERR GAINS\n"); return;
         }
         if (config.rpm_mode &&
             (!(Wheel_RPMToCounts(config.peak, CAR_WHEEL_CPR_LEFT) >= 1.0f &&
-               Wheel_RPMToCounts(config.peak, CAR_WHEEL_CPR_LEFT) <= 25.0f) ||
+               Wheel_RPMToCounts(config.peak, CAR_WHEEL_CPR_LEFT) <= AUTOTUNE_MAX_TARGET_COUNTS) ||
              !(Wheel_RPMToCounts(config.peak, CAR_WHEEL_CPR_RIGHT) >= 1.0f &&
-               Wheel_RPMToCounts(config.peak, CAR_WHEEL_CPR_RIGHT) <= 25.0f))) {
+               Wheel_RPMToCounts(config.peak, CAR_WHEEL_CPR_RIGHT) <= AUTOTUNE_MAX_TARGET_COUNTS))) {
             send_text("ERR RPM\n"); return;
+        }
+        if (config.long_hold && (config.limit > 150.0f || config.peak > 30.0f)) {
+            send_text("ERR LONG_PROFILE\n"); return;
         }
         if (config.rpm_mode == 2u && (config.kp_l != CAR_DRIVE_KP_LEFT || config.ki_l != CAR_DRIVE_KI_LEFT ||
             config.kp_r != CAR_DRIVE_KP_RIGHT || config.ki_r != CAR_DRIVE_KI_RIGHT ||
@@ -392,6 +446,36 @@ static void command(char *line)
         pending_run = 1u;
         __set_PRIMASK(saved);
         /* ACK is emitted by Poll only after the timer applies this entire set. */
+#ifndef CAR_GROUND_TEST
+    } else if (n == 1u && !strcmp(tokens[0], "LONGINFO")) {
+        send_text("LONGINFO ELC_HOLD15_V1 150 16500 30\n");
+    } else if (n == 1u && !strcmp(tokens[0], "RAWINFO")) {
+        send_text("RAWINFO ELC_RAW10_V1 10 552\n");
+    } else if (n == 1u && !strcmp(tokens[0], "JOGRAWINFO")) {
+        send_text("JOGRAWINFO ELC_JOG_RAW10_V1 10 800\n");
+    } else if (n == 1u && !strcmp(tokens[0], "RAWDUMP")) {
+        uint32_t length, id;
+        saved = lock();
+        if (state == STATE_RUN || pending_run || armed || state == STATE_IDLE || jog_active) {
+            __set_PRIMASK(saved); send_text("ERR BUSY\n"); return;
+        }
+        length = raw_count; id = active.id;
+        __set_PRIMASK(saved);
+        if (raw_jog == 2u) { send_text("ERR RAW_MODE\n"); return; }
+        if (raw_jog) snprintf(out, sizeof out, "RAWJOG %lu %lu %d %d %lu\n", (unsigned long)id,
+            (unsigned long)length, (int)jog_l, (int)jog_r, (unsigned long)jog_ms);
+        else snprintf(out, sizeof out, "%s %lu %lu %u %u %.4f\n", active.long_hold ? "RAWBEGIN15" : "RAWBEGIN", (unsigned long)id,
+            (unsigned long)length, active.rpm_mode, active.hold_mode, (double)active.peak);
+        if (!send_text(out)) return;
+        for (uint32_t index = 0; index < length; ++index) {
+            const RawSample *r = &raw_trace[index];
+            snprintf(out, sizeof out, "%u,%d,%d,%u,%u,%lu\n", (unsigned)r->time_ms,
+                (int)r->raw_l, (int)r->raw_r, (unsigned)r->pwm_l, (unsigned)r->pwm_r,
+                (unsigned long)r->period_us);
+            if (!send_text(out)) return;
+        }
+        send_text("RAWEND\n");
+#endif
     } else if (n == 1u && !strcmp(tokens[0], "DUMP")) {
         uint32_t index, length, id;
         saved = lock();
@@ -451,7 +535,7 @@ void Autotune_Poll(void)
                 (unsigned long)applied_ms);
         } else {
         snprintf(out, sizeof out, "%s %lu %.6f %.6f %.6f %.6f %.4f %.0f\n",
-            ack_kind == 6u ? "DRIVESTEPACK" : (ack_kind == 5u ? "DRIVEACK" :
+            ack_kind == 7u ? "HOLD15ACK" : ack_kind == 6u ? "DRIVESTEPACK" : (ack_kind == 5u ? "DRIVEACK" :
             (ack_kind == 4u ? "HOLDACK" : (ack_kind == 3u ? "RPMACK" : "ACK"))), (unsigned long)applied.id,
             (double)applied.kp_l, (double)applied.ki_l,
             (double)applied.kp_r, (double)applied.ki_r,

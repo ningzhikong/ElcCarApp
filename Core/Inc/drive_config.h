@@ -6,6 +6,12 @@
 #define CAR_DRIVE_KI_LEFT 1.0f
 #define CAR_DRIVE_KP_RIGHT 2.0f
 #define CAR_DRIVE_KI_RIGHT 1.0f
+#if defined(CAR_GROUND_TEST) && !defined(CAR_GROUND_LINE)
+/* Dedicated straight-line load test; normal routes retain their baseline. */
+#define CAR_DRIVE_MAX_RPM 130.0f
+#define CAR_DRIVE_PWM_LIMIT 450u
+#else
 #define CAR_DRIVE_MAX_RPM 20.0f
 #define CAR_DRIVE_PWM_LIMIT 150u
+#endif
 #endif

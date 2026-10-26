@@ -5,6 +5,9 @@
 #include "autotune.h"
 #include "wheel_calibration.h"
 #include "drive_config.h"
+#ifdef CAR_GROUND_TEST
+#include "ground_test.h"
+#endif
 #include <string.h>
 
 Speed_PID_t pid_L, pid_R;
@@ -165,8 +168,12 @@ void Control_SetEncoderSigns(int left, int right)
 void Control_ConfigurePI(float kp_l, float ki_l, float kp_r, float ki_r, float limit)
 {
     uint32_t saved = lock();
+    float max_limit = Autotune_IsEnabled() ? (float)AUTOTUNE_MAX_PWM : 200.0f;
+#if defined(CAR_GROUND_TEST) && !defined(CAR_GROUND_LINE)
+    max_limit = (float)CAR_DRIVE_PWM_LIMIT;
+#endif
     if (drive_enabled || !(kp_l >= 0.0f && kp_l <= 10.0f && ki_l >= 0.0f && ki_l <= 2.0f &&
-        kp_r >= 0.0f && kp_r <= 10.0f && ki_r >= 0.0f && ki_r <= 2.0f && limit >= 20.0f && limit <= 200.0f) ||
+        kp_r >= 0.0f && kp_r <= 10.0f && ki_r >= 0.0f && ki_r <= 2.0f && limit >= 20.0f && limit <= max_limit) ||
         limit != (float)(uint32_t)limit) {
         Control_LatchFault(CONTROL_FAULT_EMERGENCY);
         __set_PRIMASK(saved);
@@ -390,6 +397,9 @@ void Control_TimerIRQ(void)
         ++current.late_ticks;
         if (drive_enabled) Control_LatchFault(CONTROL_FAULT_TIMING);
     }
+#ifdef CAR_GROUND_TEST
+    Ground_BeforeControl(now);
+#endif
     if (Autotune_IsEnabled()) Autotune_BeforeControl(now);
     if (drive_enabled && now - target_tick > 100u)
         Control_LatchFault(CONTROL_FAULT_STALE_TARGET);
@@ -413,6 +423,12 @@ void Control_TimerIRQ(void)
         TIM3->CCR3 = TIM3->CCR4 = 0u;
         current.pwm_l = current.pwm_r = 0.0f;
     }
+#ifdef CAR_GROUND_TEST
+    {
+        ControlView ground_snapshot = current;
+        Ground_AfterControl(&ground_snapshot);
+    }
+#endif
     if (Autotune_IsEnabled()) {
         ControlView snapshot = current;
         Autotune_AfterControl(&snapshot);

@@ -1,4 +1,7 @@
 #include "mpu6050.h"
+#include <string.h>
+
+volatile MPU6050_CalibrationReport mpu_calibration_report;
 
 /* 写单个寄存器 */
 static uint8_t write_reg(I2C_HandleTypeDef *h, uint8_t reg, uint8_t val) {
@@ -48,24 +51,40 @@ uint8_t MPU6050_CalibrateBias(I2C_HandleTypeDef *hi2c,
     float low[3] = {500.0f, 500.0f, 500.0f};
     float high[3] = {-500.0f, -500.0f, -500.0f};
     uint8_t moving = 0u;
-    if (n < 20u) return 1u;
+    memset((void *)&mpu_calibration_report, 0, sizeof mpu_calibration_report);
+    mpu_calibration_report.requested = n;
+    mpu_calibration_report.gravity_min = 4.0f;
+    if (n < 20u) { mpu_calibration_report.flags = 1u; return 1u; }
     for (uint16_t i = 0; i < n; i++) {
         if (MPU6050_Read(hi2c, &d) == 0) {
             float rates[3] = {d.gx, d.gy, d.gz};
             float gravity = d.ax * d.ax + d.ay * d.ay + d.az * d.az;
-            if (!(gravity >= 0.64f && gravity <= 1.44f)) moving = 1u;
+            if (gravity < mpu_calibration_report.gravity_min) mpu_calibration_report.gravity_min = gravity;
+            if (gravity > mpu_calibration_report.gravity_max) mpu_calibration_report.gravity_max = gravity;
+            if (!(gravity >= 0.64f && gravity <= 1.44f)) {
+                moving = 1u; ++mpu_calibration_report.gravity_failures;
+            }
             for (unsigned axis = 0; axis < 3u; ++axis) {
-                if (!(rates[axis] >= -10.0f && rates[axis] <= 10.0f)) moving = 1u;
+                if (!(rates[axis] >= -10.0f && rates[axis] <= 10.0f)) {
+                    moving = 1u; ++mpu_calibration_report.rate_failures;
+                }
                 if (rates[axis] < low[axis]) low[axis] = rates[axis];
                 if (rates[axis] > high[axis]) high[axis] = rates[axis];
             }
             sx += d.gx; sy += d.gy; sz += d.gz; ok++;
-        }
+        } else ++mpu_calibration_report.io_failures;
         HAL_Delay(5);
     }
-    if ((uint32_t)ok * 10u < (uint32_t)n * 9u || moving) return 1u;
-    for (unsigned axis = 0; axis < 3u; ++axis)
-        if (high[axis] - low[axis] > 2.0f) return 1u;
+    mpu_calibration_report.samples = ok;
+    if ((uint32_t)ok * 10u < (uint32_t)n * 9u) mpu_calibration_report.flags |= 2u;
+    if (mpu_calibration_report.gravity_failures) mpu_calibration_report.flags |= 4u;
+    if (mpu_calibration_report.rate_failures) mpu_calibration_report.flags |= 8u;
+    for (unsigned axis = 0; axis < 3u; ++axis) {
+        mpu_calibration_report.low[axis] = low[axis];
+        mpu_calibration_report.high[axis] = high[axis];
+        if (high[axis] - low[axis] > 2.0f) mpu_calibration_report.flags |= 16u;
+    }
+    if ((uint32_t)ok * 10u < (uint32_t)n * 9u || moving || mpu_calibration_report.flags) return 1u;
     *bgx = sx / ok;
     *bgy = sy / ok;
     *bgz = sz / ok;
