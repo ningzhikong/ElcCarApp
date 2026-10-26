@@ -85,16 +85,17 @@ static void exchange(const char *text, const char *expected)
     clear_output(); feed(text);
     assert(strstr(output, expected));
 }
-static void tick(int raw)
+static void tick_pair(int left, int right)
 {
     now += 10u;
     measured.tick_ms = now;
     measured.period_us = 10000u;
-    measured.raw_l = measured.raw_r = raw;
-    measured.speed_l = measured.speed_r = (float)raw;
+    measured.raw_l = left; measured.raw_r = right;
+    measured.speed_l = (float)left; measured.speed_r = (float)right;
     Autotune_BeforeControl(now);
     Autotune_AfterControl(&measured);
 }
+static void tick(int raw) { tick_pair(raw, raw); }
 static void arm(void)
 {
     for (unsigned i = 0u; i < 35u; ++i) tick(0);
@@ -182,7 +183,49 @@ int main(int argc, char **argv)
     Autotune_Init();
     exchange("HELLO\n", "HELLO ELC_AUTOTUNE_V1 INC_PI_COUNTS_10MS 10 50 5500\n");
     exchange("INFO\n", "INFO ELC_INC_PI_V1 ");
-    if (!strcmp(argv[1], "drive_profile") || !strcmp(argv[1], "drive_step") || !strcmp(argv[1], "drive_cancel")) {
+    if (!strncmp(argv[1], "hold15", 6)) {
+        exchange("LONGINFO\n", "LONGINFO ELC_HOLD15_V1 150 16500 30");
+        arm();
+        if (!strcmp(argv[1], "hold15_validation")) {
+            exchange("HOLDRPM15 7 2 .3 2 .3 30 151\n", "ERR LONG_PROFILE");
+            exchange("HOLDRPM15 7 2 .3 2 .3 31 100\n", "ERR LONG_PROFILE");
+            assert(configured == 0);
+        } else {
+            clear_output(); feed("HOLDRPM15 7 2 .3 2 .3 30 100\n");
+            for (unsigned i = 0; i <= 1650; ++i) {
+                if (i % 10 == 0 && strcmp(argv[1], "hold15_heartbeat")) feed("PING\n");
+                if (i == 600 && !strcmp(argv[1], "hold15_stop")) feed("STOP\n");
+                tick_pair(i ? 3 : 0, i ? 4 : 0); Autotune_Poll();
+                if (i == 0) assert(strstr(output, "HOLD15ACK 7"));
+                if (!strcmp(argv[1], "hold15")) {
+                    if (i >= 50 && i < 1550) {
+                        assert(fabsf(measured.target_l - 5.4f) < .00001f);
+                        assert(fabsf(measured.target_r - 6.6f) < .00001f);
+                    } else assert(measured.pwm_l == 0 && measured.pwm_r == 0);
+                }
+            }
+            assert(measured.pwm_l == 0 && measured.pwm_r == 0);
+            if (!strcmp(argv[1], "hold15_heartbeat")) exchange("STATUS\n", "STATUS 7 4 10");
+            else if (!strcmp(argv[1], "hold15_stop")) exchange("STATUS\n", "STATUS 7 3 0");
+            else {
+                exchange("STATUS\n", "STATUS 7 2 0 111 16500 0");
+                exchange("DUMP\n", "BEGIN 7 111\n0,");
+                assert(strstr(output, "\n16500,3,4,0.0000,0.0000"));
+                tick(0); tick(0);
+                exchange("RAWDUMP\n", "RAWBEGIN15 7 551 1 1 30.0000\n");
+                char *line = strtok(output, "\n");
+                for (unsigned i = 0; i <= 550; ++i) {
+                    unsigned t, pl, pr, period; int l, r;
+                    line = strtok(NULL, "\n"); assert(line);
+                    assert(sscanf(line, "%u,%d,%d,%u,%u,%u", &t, &l, &r, &pl, &pr, &period) == 6);
+                    assert(t == i * 30 && l == (i ? 9 : 0) && r == (i ? 12 : 0));
+                    assert(period == (i ? 30000u : 10000u));
+                    assert(pl == (t >= 500 && t < 15500 ? 100u : 0u) && pr == pl);
+                }
+                assert(!strcmp(strtok(NULL, "\n"), "RAWEND"));
+            }
+        }
+    } else if (!strcmp(argv[1], "drive_profile") || !strcmp(argv[1], "drive_step") || !strcmp(argv[1], "drive_cancel")) {
         int hold = strcmp(argv[1], "drive_step") != 0;
         exchange("DRIVEINFO\n", "DRIVEINFO ELC_DRIVE_RPM_V1 2.000000 1.000000 2.000000 1.000000 20.0000 150 1 1\n");
         arm(); clear_output();
@@ -209,40 +252,86 @@ int main(int argc, char **argv)
         exchange("DRIVERPM 7 2 1 2 1 21 150\n", "ERR DRIVE_PROFILE");
         exchange("DRIVESTEP 7 2 1 2 1 20 100\n", "ERR DRIVE_PROFILE");
         assert(configured == 0 && measured.pwm_l == 0);
-    } else if (!strcmp(argv[1], "rpm_profile") || !strcmp(argv[1], "rpm_hold")) {
-        int hold = !strcmp(argv[1], "rpm_hold");
+    } else if (!strcmp(argv[1], "rpm_profile") || !strcmp(argv[1], "rpm_hold") || !strcmp(argv[1], "rpm_hold30") || !strcmp(argv[1], "rpm_hold90") || !strcmp(argv[1], "rpm_hold100") || !strcmp(argv[1], "rpm_hold130") || !strcmp(argv[1], "raw_trace")) {
+        int p130 = !strcmp(argv[1], "rpm_hold130"), p100 = !strcmp(argv[1], "rpm_hold100"), p90 = !strcmp(argv[1], "rpm_hold90");
+        int raw_mode = !strcmp(argv[1], "raw_trace") || p90 || p100 || p130;
+        int hold = strcmp(argv[1], "rpm_profile") != 0;
+        float peak = p130 ? 130.0f : p100 ? 100.0f : p90 ? 90.0f : (!strcmp(argv[1], "rpm_hold30") || raw_mode) ? 30.0f : 20.0f;
+        float scale = peak / 20.0f;
+        char request[128], expected_ack[160], expected_raw[100];
+        if (p90 || p100 || p130) pwm_cap = p130 ? 450u : p100 ? 350u : 300u;
         exchange("CAL\n", "CAL MANUAL_REF_V1 1080 1320\n");
         exchange("RPMINFO\n", "RPMINFO ELC_RPM_PI_ADAPTIVE_V1\n");
-        arm(); clear_output(); feed(hold ? "HOLDRPM 7 2 .3 2 .3 20 100\n" : "RUNRPM 7 2 .3 2 .3 20 100\n");
+        snprintf(request, sizeof request, "%s 7 2 .3 2 .3 %.0f %u\n", hold ? "HOLDRPM" : "RUNRPM", peak, pwm_cap);
+        snprintf(expected_ack, sizeof expected_ack, "%s 7 2.000000 0.300000 2.000000 0.300000 %.4f %u", hold ? "HOLDACK" : "RPMACK", peak, pwm_cap);
+        arm(); clear_output(); feed(request);
         assert(!strstr(output, "RPMACK"));
         for (unsigned i = 0; i <= 550; ++i) {
             if (i % 10 == 0) feed("PING\n");
             tick(i ? 3 : 0); Autotune_Poll();
-            if (i == 0) assert(strstr(output, hold ? "HOLDACK 7 2.000000 0.300000 2.000000 0.300000 20.0000 100" : "RPMACK 7 2.000000 0.300000 2.000000 0.300000 20.0000 100"));
+            if (i == 0) assert(strstr(output, expected_ack));
             if (i == 50) {
-                assert(fabsf(measured.target_l - (hold ? 3.6f : 1.44f)) < .00001f);
-                assert(fabsf(measured.target_r - (hold ? 4.4f : 1.76f)) < .00001f);
+                assert(fabsf(measured.target_l - scale * (hold ? 3.6f : 1.44f)) < .00001f);
+                assert(fabsf(measured.target_r - scale * (hold ? 4.4f : 1.76f)) < .00001f);
             }
             if (i == 150) {
-                assert(fabsf(measured.target_l - 3.6f) < .00001f);
-                assert(fabsf(measured.target_r - 4.4f) < .00001f);
+                assert(fabsf(measured.target_l - scale * 3.6f) < .00001f);
+                assert(fabsf(measured.target_r - scale * 4.4f) < .00001f);
             }
             if (i == 300) {
-                assert(fabsf(measured.target_l - (hold ? 3.6f : 1.8f)) < .00001f);
-                assert(fabsf(measured.target_r - (hold ? 4.4f : 2.2f)) < .00001f);
+                assert(fabsf(measured.target_l - scale * (hold ? 3.6f : 1.8f)) < .00001f);
+                assert(fabsf(measured.target_r - scale * (hold ? 4.4f : 2.2f)) < .00001f);
             }
             if (i == 450) assert(measured.pwm_l == 0 && measured.pwm_r == 0);
+            if (raw_mode && i == 200) exchange("RAWDUMP\n", "ERR BUSY");
         }
         exchange("STATUS\n", "STATUS 7 2 0 111 5500 0");
         assert(measured.pwm_l == 0 && measured.pwm_r == 0);
+        if (raw_mode) {
+            tick(0); tick(0); /* DONE must not append duplicate final samples. */
+            exchange("RAWINFO\n", "RAWINFO ELC_RAW10_V1 10 552");
+            snprintf(expected_raw, sizeof expected_raw, "RAWBEGIN 7 551 1 1 %.4f\n", peak);
+            exchange("RAWDUMP\n", expected_raw);
+            char *line = strtok(output, "\n");
+            for (unsigned i = 0; i <= 550; ++i) {
+                unsigned t, pl, pr, period;
+                int l, r;
+                line = strtok(NULL, "\n"); assert(line);
+                assert(sscanf(line, "%u,%d,%d,%u,%u,%u", &t, &l, &r, &pl, &pr, &period) == 6);
+                assert(t == i * 10 && l == (i ? 3 : 0) && r == l && period == 10000);
+                assert(pl == (i >= 50 && i < 450 ? pwm_cap : 0u) && pr == pl);
+            }
+            assert(!strcmp(strtok(NULL, "\n"), "RAWEND"));
+        }
     } else if (!strcmp(argv[1], "rpm_validation")) {
         arm();
         exchange("RUNRPM 7 2 .3 2 .3 5 100\n", "ERR RPM");
         exchange("RUNRPM 7 2 .3 2 .3 nan 100\n", "ERR GAINS");
-        exchange("RUNRPM 7 2 .3 2 .3 26 100\n", "ERR GAINS");
-        exchange("RUNRPM 7 2 .3 2 .3 20 201\n", "ERR GAINS");
+        exchange("RUNRPM 7 2 .3 2 .3 131 100\n", "ERR GAINS");
+        exchange("RUN 7 2 .3 2 .3 26 100\n", "ERR GAINS");
+        exchange("DRIVERPM 7 2 1 2 1 30 150\n", "ERR DRIVE_PROFILE");
+        exchange("RUNRPM 7 2 .3 2 .3 20 451\n", "ERR GAINS");
         exchange("HOLDRPM 7 2 .3 2 .3 5 100\n", "ERR RPM");
         assert(configured == 0 && measured.pwm_l == 0);
+    } else if (!strcmp(argv[1], "jog_raw")) {
+        arm();
+        clear_output(); feed("JOG 1 111 0 800\n"); tick_pair(0, 0); Autotune_Poll();
+        assert(strstr(output, "JOGACK 1 111 0 800"));
+        exchange("RAWDUMP\n", "ERR BUSY");
+        for (unsigned i = 0; i < 80; ++i) tick_pair(3, 0);
+        assert(measured.pwm_l == 0 && measured.pwm_r == 0);
+        exchange("JOGRAWINFO\n", "JOGRAWINFO ELC_JOG_RAW10_V1 10 800");
+        exchange("RAWDUMP\n", "RAWJOG 1 81 111 0 800\n");
+        char *line = strtok(output, "\n");
+        for (unsigned i = 0; i <= 80; ++i) {
+            unsigned t, pl, pr, period;
+            int l, r;
+            line = strtok(NULL, "\n"); assert(line);
+            assert(sscanf(line, "%u,%d,%d,%u,%u,%u", &t, &l, &r, &pl, &pr, &period) == 6);
+            assert(t == i * 10 && l == (i ? 3 : 0) && r == 0 && period == 10000);
+            assert(pl == (i < 80 ? 111u : 0u) && pr == 0);
+        }
+        assert(!strcmp(strtok(NULL, "\n"), "RAWEND"));
     } else if (!strncmp(argv[1], "jog_", 4)) {
         exchange("JOG 9 150 0 800\n", "ERR NOT_ARMED");
         arm();
@@ -274,6 +363,7 @@ int main(int argc, char **argv)
                 for (unsigned i = 0; i < 79; ++i) tick(-3);
                 assert(measured.pwm_l == -150);
                 tick(-3); exchange("STATUS\n", "STATUS 9 2 0 17 800 0");
+                exchange("RAWDUMP\n", "ERR RAW_MODE");
             } else if (!strcmp(argv[1], "jog_key")) {
                 stop_key = 1; tick(0); exchange("STATUS\n", "STATUS 9 3 0");
             } else if (!strcmp(argv[1], "jog_uart")) {
@@ -333,6 +423,12 @@ int main(int argc, char **argv)
             fputs(output, stdout);
             return 0;
         }
+    } else if (!strcmp(argv[1], "raw_period_overflow")) {
+        start(); now += 10u; Autotune_BeforeControl(now);
+        measured.period_us = 70000u;
+        Autotune_AfterControl(&measured);
+        exchange("STATUS\n", "STATUS 7 4 15");
+        assert(measured.pwm_l == 0 && measured.pwm_r == 0);
     } else if (!strcmp(argv[1], "heartbeat")) {
         start();
         for (unsigned i = 0; i < 100u; ++i) tick(3);

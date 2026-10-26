@@ -14,9 +14,14 @@ CONTROLLER = {'id': 'ELC_INC_PI_V1', 'period_ms': 10, 'filter_alpha': .125,
               'kd': 0, 'delta_limit': 30, 'forward_only': True, 'zero_target_cancel': True}
 
 
-def validate_parameters(args):
+RPM_BENCH_MAX = 130
+RPM_BENCH_PWM_MAX = 450
+RPM_BENCH_COUNTS_MAX = 30
+
+
+def validate_parameters(args, *, peak_max=25, pwm_max=200):
     limits = ((args.kp_left, 0, 10), (args.ki_left, 0, 2), (args.kp_right, 0, 10),
-              (args.ki_right, 0, 2), (args.peak, 1, 25), (args.pwm_limit, 20, 200))
+              (args.ki_right, 0, 2), (args.peak, 1, peak_max), (args.pwm_limit, 20, pwm_max))
     if any(type(v) not in (int, float) or not math.isfinite(v) or not lo <= v <= hi
            for v, lo, hi in limits):
         raise ValueError('Experiment parameters outside initial bench bounds')
@@ -32,9 +37,10 @@ def target_at(t, peak):
     return 0.0 if t < 500 or t >= 4500 else .4 * peak if t < 1500 else peak if t < 3000 else .5 * peak
 
 
-def validate_trace(rows, peak, limit, target_profile=None):
+def validate_trace(rows, peak, limit, target_profile=None, *, peak_max=25, pwm_max=200, speed_max=100):
     """Reject invalid experiments before calculating either wheel's score."""
-    if not math.isfinite(peak) or not 1 <= peak <= 25 or not 20 <= limit <= 200 or int(limit) != limit:
+    if (not math.isfinite(peak) or not 1 <= peak <= peak_max or not 20 <= limit <= pwm_max
+            or int(limit) != limit or not math.isfinite(speed_max) or speed_max <= 0):
         raise ValueError('Invalid experiment profile')
     if len(rows) != 111:
         raise ValueError('Expected 111 samples, including start and local stop')
@@ -51,7 +57,7 @@ def validate_trace(rows, peak, limit, target_profile=None):
         expected = (target_profile or target_at)(t, peak)
         if abs(target_l - expected) > .00015 or abs(target_r - expected) > .00015:
             raise ValueError('Target profile does not match the applied experiment')
-        if max(abs(raw_l), abs(raw_r), abs(speed_l), abs(speed_r)) > 100:
+        if max(abs(raw_l), abs(raw_r)) > 100 or max(abs(speed_l), abs(speed_r)) > speed_max:
             raise ValueError('Telemetry exceeds the initial bench speed envelope')
         if not 0 <= pwm_l <= limit or not 0 <= pwm_r <= limit:
             raise ValueError('Actual PWM exceeds applied limit')
@@ -178,7 +184,8 @@ class Board:
             time.sleep(.1)
 
     def run(self, args, experiment_id=1, wheel_cpr=None, hold=False, drive=False):
-        validate_parameters(args)
+        validate_parameters(args, peak_max=RPM_BENCH_MAX if wheel_cpr is not None else 25,
+                            pwm_max=RPM_BENCH_PWM_MAX if wheel_cpr is not None else 200)
         if drive and (wheel_cpr is None or args.peak > 20 or args.pwm_limit != 150 or
                       [args.kp_left, args.ki_left, args.kp_right, args.ki_right] != [2., 1., 2., 1.] or
                       (args.sign_left, args.sign_right) != (1, 1)):
@@ -203,7 +210,7 @@ class Board:
         self.firmware_info = identity
         if wheel_cpr is not None:
             if (len(wheel_cpr) != 2 or any(type(c) is not int or c <= 0 or c > 1000000 for c in wheel_cpr)
-                    or any(not 1 <= args.peak * c / 6000 <= 25 for c in wheel_cpr)):
+                    or any(not 1 <= args.peak * c / 6000 <= RPM_BENCH_COUNTS_MAX for c in wheel_cpr)):
                 raise ValueError('RPM conversion exceeds the counts/10ms envelope')
             self.send('CAL')
             if self.read() != f'CAL MANUAL_REF_V1 {wheel_cpr[0]} {wheel_cpr[1]}':

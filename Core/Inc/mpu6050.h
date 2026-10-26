@@ -21,14 +21,33 @@
 #define MPU6050_GYRO_LSB   65.5f
 #define MPU6050_ACCEL_LSB 16384.0f
 
-/* 竖放(绕 X 轴转 90°)时, 偏航(yaw)对应芯片 Y 轴。
-   若实车发现转向方向反了, 把这里改成 -1.0f 即可翻转。 */
+/* 2026-10-25 whole-car manual checks: left yaw increases X, right decreases X. */
+#define MPU_YAW_AXIS 0u
 #define MPU_YAW_SIGN  (+1.0f)
 
 typedef struct {
     float ax, ay, az;   /* 单位 g */
     float gx, gy, gz;   /* 单位 °/s */
 } MPU6050_Data_t;
+
+typedef struct {
+    uint32_t requested, samples, io_failures, gravity_failures, rate_failures, flags;
+    float low[3], high[3], gravity_min, gravity_max;
+} MPU6050_CalibrationReport;
+extern volatile MPU6050_CalibrationReport mpu_calibration_report;
+
+static inline float MPU6050_RawYaw(const MPU6050_Data_t *data)
+{
+#if MPU_YAW_AXIS == 0u
+    return data->gx;
+#elif MPU_YAW_AXIS == 1u
+    return data->gy;
+#elif MPU_YAW_AXIS == 2u
+    return data->gz;
+#else
+#error Invalid MPU yaw axis
+#endif
+}
 
 uint8_t MPU6050_Init(I2C_HandleTypeDef *hi2c);
 uint8_t MPU6050_Read(I2C_HandleTypeDef *hi2c, MPU6050_Data_t *d);

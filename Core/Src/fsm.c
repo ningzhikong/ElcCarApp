@@ -159,9 +159,10 @@ static bool update_yaw(uint32_t now)
 {
     MPU6050_Data_t data;
     uint32_t dt = now - yaw_tick;
-    if (!mpu_ready || dt > ROUTE_IMU_MAX_GAP_MS || MPU6050_Read(&hi2c2, &data) != 0 ||
-        !(data.gy >= -500.0f && data.gy <= 500.0f)) return false;
-    current_yaw = wrap_yaw(current_yaw + MPU_YAW_SIGN * (data.gy - mpu_bias[1]) * ((float)dt * 0.001f));
+    if (!mpu_ready || dt > ROUTE_IMU_MAX_GAP_MS || MPU6050_Read(&hi2c2, &data) != 0) return false;
+    float raw_yaw = MPU6050_RawYaw(&data);
+    if (!(raw_yaw >= -500.0f && raw_yaw <= 500.0f)) return false;
+    current_yaw = wrap_yaw(current_yaw + MPU_YAW_SIGN * (raw_yaw - mpu_bias[MPU_YAW_AXIS]) * ((float)dt * 0.001f));
     yaw_tick = now;
     return true;
 }

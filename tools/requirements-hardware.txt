@@ -1,0 +1,5 @@
+# Install globally/in a venv, or with --target .build/pyocd_deps.
+pyocd==0.45.1
+pyserial==3.5
+intelhex==2.3.0
+pyelftools==0.33

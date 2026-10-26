@@ -54,7 +54,7 @@ uint8_t MPU6050_CalibrateBias(I2C_HandleTypeDef *h, float *x, float *y, float *z
     return (uint8_t)calibration_error;
 }
 uint8_t MPU6050_Read(I2C_HandleTypeDef *h, MPU6050_Data_t *d)
-{ (void)h; memset(d, 0, sizeof *d); d->gy = gyro_y; return (uint8_t)read_error; }
+{ (void)h; memset(d, 0, sizeof *d); d->gx = gyro_y; return (uint8_t)read_error; }
 void Motor_Init(void) { }
 void Control_ConfigureDriveRPM(void) { ++configured_rpm; }
 void Control_Stop(void) { base = turn = 0; }

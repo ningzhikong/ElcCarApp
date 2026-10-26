@@ -345,6 +345,14 @@ int main(int argc, char **argv)
     } else if (!strcmp(argv[1], "invalid_gains")) {
         Control_ConfigurePI(NAN, .3f, 2.0f, .3f, 100.0f);
         assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY && TIM3->CCR3 == 0u);
+    } else if (!strcmp(argv[1], "bench_pwm_boundary")) {
+        Control_ConfigurePI(2.0f, 1.0f, 2.0f, 1.0f, 450.0f);
+        assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY);
+        Control_ClearFault(); test_mode = 1;
+        Control_ConfigurePI(2.0f, 1.0f, 2.0f, 1.0f, 450.0f);
+        assert(Control_GetFault() == 0 && pid_L.max_output == 450 && pid_R.max_output == 450);
+        Control_ConfigurePI(2.0f, 1.0f, 2.0f, 1.0f, 451.0f);
+        assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY && TIM3->CCR3 == 0 && TIM3->CCR4 == 0);
     } else if (!strcmp(argv[1], "fractional_limit")) {
         Control_ConfigurePI(2.0f, .3f, 2.0f, .3f, 100.5f);
         assert(Control_GetFault() == CONTROL_FAULT_EMERGENCY && TIM3->CCR3 == 0u);

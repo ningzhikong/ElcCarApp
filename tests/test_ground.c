@@ -5,6 +5,8 @@
 #include <math.h>
 #include "wheel_calibration.h"
 #include "ir_filter.h"
+#include "drive_config.h"
+#include "mpu6050.h"
 
 TestTimer test_tim1, test_tim2, test_tim3, test_tim4;
 TestRcc test_rcc;
@@ -15,6 +17,15 @@ int htim2, htim3, htim4;
 static uint32_t now, mask;
 static GPIO_PinState start_key = GPIO_PIN_SET, stop_key = GPIO_PIN_SET;
 static unsigned mux;
+I2C_HandleTypeDef hi2c2;
+static int imu_init_error, imu_calibration_error, imu_read_error;
+static float imu_rate;
+void HAL_Delay(uint32_t ms) { now += ms; }
+uint8_t MPU6050_Init(I2C_HandleTypeDef *bus) { (void)bus; return (uint8_t)imu_init_error; }
+uint8_t MPU6050_CalibrateBias(I2C_HandleTypeDef *bus, float *x, float *y, float *z, uint16_t n)
+{ (void)bus; assert(n == 200); *x = *y = *z = 0; now += 1000; return (uint8_t)imu_calibration_error; }
+uint8_t MPU6050_Read(I2C_HandleTypeDef *bus, MPU6050_Data_t *data)
+{ (void)bus; memset(data, 0, sizeof *data); data->gx = imu_rate; return (uint8_t)imu_read_error; }
 static uint32_t ir_levels = 0xe7u; /* two centered black sensors */
 void HAL_GPIO_Init(void *p, GPIO_InitTypeDef *c)
 { assert(p == GPIOA && c->Pin == GPIO_PIN_2 && c->Pull == GPIO_PULLUP); }
@@ -68,16 +79,26 @@ static void run(void)
     ControlView v;
     Control_ReadView(&v);
     assert(ground_target_rpm == GROUND_RPM);
-    assert(fabsf(v.target_l - Wheel_RPMToCounts(GROUND_RPM, CAR_WHEEL_CPR_LEFT)) < .00001f);
-    assert(fabsf(v.target_r - Wheel_RPMToCounts(GROUND_RPM, CAR_WHEEL_CPR_RIGHT)) < .00001f);
-    assert(pid_L.max_output == 150 && pid_R.max_output == 150);
+    assert(fabsf(v.target_l - Wheel_RPMToCounts(GROUND_START_RPM, CAR_WHEEL_CPR_LEFT)) < .00001f);
+    assert(fabsf(v.target_r - Wheel_RPMToCounts(GROUND_START_RPM, CAR_WHEEL_CPR_RIGHT)) < .00001f);
+    assert(pid_L.max_output == CAR_DRIVE_PWM_LIMIT && pid_R.max_output == CAR_DRIVE_PWM_LIMIT);
 }
 int main(int argc, char **argv)
 {
     assert(argc == 2);
+    imu_init_error = !strcmp(argv[1], "imu_init_error");
+    imu_calibration_error = !strcmp(argv[1], "imu_calibration_error");
     if (!strcmp(argv[1], "wrap")) now = 0xfffff000u;
     Motor_Init(); Ground_Init(); Control_StartTimer();
     assert(ground_result.magic == 0x47524434u);
+#ifndef CAR_GROUND_LINE
+    if (imu_init_error || imu_calibration_error) {
+        assert(ground_result.state == GROUND_FAULT && ground_result.reason == 110 && !ground_heading.ready);
+        idle(200); assert(TIM3->CCR3 == 0 && TIM3->CCR4 == 0);
+        puts("ground_imu_init_fault: PASS"); return 0;
+    }
+    if (!strcmp(argv[1], "heading_reference")) ground_heading.angle_deg = 45.0f;
+#endif
     if (!strcmp(argv[1], "filter")) {
         IRFilter f;
         IRFilter_Reset(&f);
@@ -128,6 +149,61 @@ int main(int argc, char **argv)
 #endif
     } else {
         run();
+#ifndef CAR_GROUND_LINE
+        if (!strcmp(argv[1], "heading_scaling")) {
+            for (unsigned i = 0; i < 220; ++i) tick(10, 2, 2, 1);
+            ground_heading.angle_deg = ground_heading.target_deg + 10.0f;
+            for (unsigned i = 0; i < 40; ++i) tick(10, 2, 2, 1);
+            GroundSample sample = ground_trace[ground_result.count - 1u];
+            float left = sample.target_base_rpm - sample.turn_rpm;
+            float right = sample.target_base_rpm + sample.turn_rpm;
+            assert(left > right && left <= 130.0001f && right <= 130.0001f);
+            assert(fabsf(left - 130.0f) < .0001f && fabsf(right - 118.529412f) < .0001f);
+            assert(sample.sensor.yaw_error_deg == 10 && sample.sensor_age_ms <= 50);
+            stop_key = GPIO_PIN_RESET; idle(1);
+            assert(TIM3->CCR3 == 0 && TIM3->CCR4 == 0);
+            puts("ground_heading_scaling: PASS"); return 0;
+        }
+        if (!strcmp(argv[1], "heading_direction")) {
+            ControlView v;
+            ground_heading.angle_deg = ground_heading.target_deg + 5.0f;
+            tick(10, 2, 2, 1); Control_ReadView(&v);
+            assert(Wheel_CountsToRPM(v.target_l, CAR_WHEEL_CPR_LEFT) > Wheel_CountsToRPM(v.target_r, CAR_WHEEL_CPR_RIGHT));
+            ground_heading.angle_deg = ground_heading.target_deg - 5.0f;
+            tick(10, 2, 2, 1); tick(10, 2, 2, 1);
+            Control_ReadView(&v);
+            assert(Wheel_CountsToRPM(v.target_l, CAR_WHEEL_CPR_LEFT) < Wheel_CountsToRPM(v.target_r, CAR_WHEEL_CPR_RIGHT));
+            stop_key = GPIO_PIN_RESET; idle(1);
+            assert(ground_result.state == GROUND_STOPPED && TIM3->CCR3 == 0 && TIM3->CCR4 == 0);
+            puts("ground_heading_direction: PASS"); return 0;
+        }
+        if (!strcmp(argv[1], "imu_read_error") || !strcmp(argv[1], "imu_nonfinite") ||
+            !strcmp(argv[1], "imu_stale") || !strcmp(argv[1], "heading_diverge")) {
+            if (!strcmp(argv[1], "imu_read_error")) imu_read_error = 1;
+            if (!strcmp(argv[1], "imu_nonfinite")) imu_rate = NAN;
+            if (!strcmp(argv[1], "imu_stale")) ground_heading.tick_ms = now - 51u;
+            if (!strcmp(argv[1], "heading_diverge")) ground_heading.angle_deg = ground_heading.target_deg + 26.0f;
+            for (unsigned i = 0; i < 3; ++i) tick(10, 2, 2, strcmp(argv[1], "imu_stale") != 0);
+            assert(ground_result.state == GROUND_FAULT && ground_result.reason ==
+                (!strcmp(argv[1], "heading_diverge") ? 111u : 110u));
+            assert(TIM3->CCR3 == 0 && TIM3->CCR4 == 0);
+            puts("ground_heading_fault: PASS"); return 0;
+        }
+        if (!strcmp(argv[1], "ramp")) {
+            ControlView v;
+            for (unsigned i = 1; i <= 250; ++i) {
+                tick(10, 2, 2, 1); Control_ReadView(&v);
+                float expected = i < 200 ? 20.0f + 0.55f * (float)i : 130.0f;
+                assert(fabsf(Wheel_CountsToRPM(v.target_l, CAR_WHEEL_CPR_LEFT) - expected) < .0001f);
+                assert(fabsf(Wheel_CountsToRPM(v.target_r, CAR_WHEEL_CPR_RIGHT) - expected) < .0001f);
+                assert(ground_result.state == GROUND_RUNNING && v.pwm_l <= 450 && v.pwm_r <= 450);
+            }
+            stop_key = GPIO_PIN_RESET; idle(1);
+            assert(ground_result.state == GROUND_STOPPED && TIM3->CCR3 == 0 && TIM3->CCR4 == 0);
+            assert(ground_motion_stats.ticks == 0); /* 2.5s: still inside ramp+settle exclusion. */
+            puts("ground_ramp: PASS"); return 0;
+        }
+#endif
 #ifdef CAR_GROUND_LINE
         if (!strcmp(argv[1], "speed_plan")) {
             for (unsigned i = 0; i < 300; ++i) tick(10, 2, 2, 1);
@@ -170,7 +246,7 @@ int main(int argc, char **argv)
 #ifdef CAR_GROUND_LINE
             assert(ground_result.reason == 104); /* IR freshness stops before heartbeat deadline. */
 #else
-            assert(ground_result.reason == 100);
+            assert(ground_result.reason == 110); /* IMU freshness fails before foreground watchdog. */
 #endif
         } else if (!strcmp(argv[1], "stall")) {
             idle(101); assert(ground_result.state == GROUND_FAULT && ground_result.reason == CONTROL_FAULT_STALL);
@@ -193,6 +269,16 @@ int main(int argc, char **argv)
                 idle(100);
                 assert(ground_result.state == GROUND_DONE && ground_result.count == (GROUND_RUN_MS + 1000u) / GROUND_SAMPLE_MS);
                 assert(ground_result.count <= GROUND_TRACE_CAPACITY);
+#ifndef CAR_GROUND_LINE
+                assert(ground_motion_stats.ticks == 700);
+                assert(ground_motion_stats.counts_l == 1400 && ground_motion_stats.counts_r == 1400);
+                assert(ground_motion_stats.period_us == 7000000);
+                assert(ground_motion_stats.pwm_sum_l == 450u * 700u && ground_motion_stats.pwm_sum_r == 450u * 700u);
+                assert(ground_motion_stats.capped_l == 700 && ground_motion_stats.capped_r == 700);
+                if (!strcmp(argv[1], "heading_reference")) {
+                    assert(ground_heading.target_deg == 45.0f && Ground_HeadingError() == 0);
+                }
+#endif
                 assert(ground_trace[0].elapsed_ms == 0 && ground_trace[GROUND_RUN_MS / GROUND_SAMPLE_MS].elapsed_ms == GROUND_RUN_MS);
                 for (unsigned i = GROUND_RUN_MS / GROUND_SAMPLE_MS; i < ground_result.count; ++i)
                     assert(ground_trace[i].pwm_l == 0 && ground_trace[i].pwm_r == 0);

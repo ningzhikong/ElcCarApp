@@ -9,10 +9,10 @@ import bench
 import match
 
 
-def trace(equal_counts=False, hold=False):
+def trace(equal_counts=False, hold=False, peak=20):
     rows = []
     for t in range(0, 5501, 50):
-        rpm = (match.hold_target if hold else bench.target_at)(t, 20)
+        rpm = (match.hold_target if hold else bench.target_at)(t, peak)
         left, right = rpm * 1080 / 6000, rpm * 1320 / 6000
         speed_r = left if equal_counts else right
         pwm = 80 if rpm else 0
@@ -33,6 +33,73 @@ class FakeBoard(bench.Board):
 
 
 class MatchTests(unittest.TestCase):
+    def test_high_rpm_protocol_and_output_limit(self):
+        for peak, limit in ((100, 350), (130, 450)):
+            rows = trace(hold=True, peak=peak)
+            board = FakeBoard('CAL MANUAL_REF_V1 1080 1320')
+            board.replies += ['RPMINFO ELC_RPM_PI_ADAPTIVE_V1', 'STOPPED', 'STATUS 0 3 0 0 0 0 1', 'ARMED 1 1',
+                              f'HOLDACK 1 2 1 2 1 {peak} {limit}', 'STATUS 1 2 0 111 5500 0 0', 'BEGIN 1 111',
+                              *[','.join(map(str, row)) for row in rows], 'END']
+            args = SimpleNamespace(sign_left=1, sign_right=1, kp_left=2., ki_left=1.,
+                                   kp_right=2., ki_right=1., peak=float(peak), pwm_limit=limit)
+            self.assertEqual(board.run(args, wheel_cpr=(1080, 1320), hold=True), list(map(tuple, rows)))
+            self.assertTrue(match.evaluate(rows, peak, limit, (1080, 1320), hold=True)['matched_and_smooth'])
+
+    def test_extended_target_counts_are_bounded_before_arm(self):
+        args = SimpleNamespace(sign_left=1, sign_right=1, kp_left=2., ki_left=1.,
+                               kp_right=2., ki_right=1., peak=130., pwm_limit=450)
+        board = FakeBoard('unused')
+        with self.assertRaises(ValueError): board.run(args, wheel_cpr=(1080, 1500), hold=True)
+        self.assertFalse(any(s.startswith('ARM') for s in board.sent))
+
+    def test_rpm_unit_conversion_preserves_original_speed_guard(self):
+        rows = trace(hold=True, peak=100)
+        for row in rows:
+            if 500 <= row[0] < 4500:
+                row[5] = 105 * 1080 / 6000
+        self.assertTrue(match.evaluate(rows, 100, 350, (1080, 1320), hold=True)['trace_valid'])
+        rows[50][5] = 101  # physical counts/10ms, not normalized RPM
+        with self.assertRaises(ValueError): match.evaluate(rows, 100, 350, (1080, 1320), hold=True)
+
+    def test_90rpm_short_bench_uses_calibrated_targets_and_300_cap(self):
+        rows = trace(hold=True, peak=90)
+        self.assertTrue(match.evaluate(rows, 90, 300, (1080, 1320), hold=True)['matched_and_smooth'])
+        board = FakeBoard('CAL MANUAL_REF_V1 1080 1320')
+        board.replies += ['RPMINFO ELC_RPM_PI_ADAPTIVE_V1', 'STOPPED', 'STATUS 0 3 0 0 0 0 1', 'ARMED 1 1',
+                          'HOLDACK 1 2 1 2 1 90 300', 'STATUS 1 2 0 111 5500 0 0', 'BEGIN 1 111',
+                          *[','.join(map(str, row)) for row in rows], 'END']
+        args = SimpleNamespace(sign_left=1, sign_right=1, kp_left=2., ki_left=1.,
+                               kp_right=2., ki_right=1., peak=90., pwm_limit=300)
+        self.assertEqual(len(board.run(args, wheel_cpr=(1080, 1320), hold=True)), 111)
+        self.assertIn('HOLDRPM 1 2.000000 1.000000 2.000000 1.000000 90.0000 300', board.sent)
+        with self.assertRaises(ValueError): bench.validate_parameters(args)
+        args.pwm_limit = 451
+        rejected = FakeBoard('unused')
+        with self.assertRaises(ValueError): rejected.run(args, wheel_cpr=(1080, 1320), hold=True)
+        self.assertEqual(rejected.sent, [])
+        with self.assertRaises(ValueError): bench.validate_parameters(args)
+
+    def test_30rpm_hold_roundtrip_and_limits(self):
+        rows = trace(hold=True, peak=30)
+        self.assertTrue(match.evaluate(rows, 30, 150, (1080, 1320), hold=True)['matched_and_smooth'])
+        board = FakeBoard('CAL MANUAL_REF_V1 1080 1320')
+        board.replies += ['RPMINFO ELC_RPM_PI_ADAPTIVE_V1', 'STOPPED', 'STATUS 0 3 0 0 0 0 1', 'ARMED 1 1',
+                          'HOLDACK 1 2.000000 1.000000 2.000000 1.000000 30.0000 150',
+                          'STATUS 1 2 0 111 5500 0 0', 'BEGIN 1 111',
+                          *[','.join(map(str, row)) for row in rows], 'END']
+        args = SimpleNamespace(sign_left=1, sign_right=1, kp_left=2., ki_left=1.,
+                               kp_right=2., ki_right=1., peak=30., pwm_limit=150)
+        self.assertEqual(len(board.run(args, wheel_cpr=(1080, 1320), hold=True)), 111)
+        self.assertTrue(any(c.startswith('HOLDRPM ') and '30.0000' in c for c in board.sent))
+        for rpm, drive, calibration in ((131., False, (1080, 1320)), (30., True, (1080, 1320)), (26., False, None)):
+            args.peak = rpm
+            rejected = FakeBoard('unused')
+            with self.assertRaises(ValueError):
+                rejected.run(args, wheel_cpr=calibration, hold=True, drive=drive)
+            self.assertEqual(rejected.sent, [])
+        with self.assertRaises(ValueError):
+            match.evaluate(rows, 131, 150, (1080, 1320), hold=True)
+
     def test_normal_drive_contract_and_distinct_ack(self):
         for hold, ack, mode in ((True, 'DRIVEACK', 'DRIVERPM'), (False, 'DRIVESTEPACK', 'DRIVESTEP')):
             board = FakeBoard('CAL MANUAL_REF_V1 1080 1320')

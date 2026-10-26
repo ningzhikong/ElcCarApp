@@ -8,8 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS = ('math', 'validation', 'cancel_pending', 'complete', 'heartbeat',
              'direction', 'stall', 'stop_key', 'uart_fault', 'frame', 'overflow', 'slow_motion', 'arm_expiry', 'pending_expiry',
              'low_stall20', 'low_stall50', 'low_stall79', 'no_motion', 'sparse_motion',
-             'jog_validation', 'jog_cancel', 'jog_expiry', 'jog_complete', 'jog_key',
-             'jog_uart', 'jog_speed', 'jog_control_fault', 'jog_stop', 'rpm_profile', 'rpm_validation', 'rpm_hold',
+             'jog_validation', 'jog_cancel', 'jog_expiry', 'jog_complete', 'jog_raw', 'jog_key',
+             'jog_uart', 'jog_speed', 'jog_control_fault', 'jog_stop', 'rpm_profile', 'rpm_validation', 'rpm_hold', 'rpm_hold30', 'raw_trace',
+             'rpm_hold90', 'rpm_hold100', 'rpm_hold130', 'raw_period_overflow', 'hold15', 'hold15_heartbeat', 'hold15_stop', 'hold15_validation',
              'drive_profile', 'drive_step', 'drive_validation', 'drive_cancel')
 
 
@@ -19,6 +20,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
     output = ROOT / '.build/tests'
     output.mkdir(parents=True, exist_ok=True)
+    heading_math = output / 'heading_tests.exe'
+    subprocess.run([args.gcc, '-std=c99', '-Wall', '-Wextra', '-Werror', '-pedantic',
+                    f'-I{ROOT / "Core/Inc"}', str(ROOT / 'Core/Src/heading_control.c'),
+                    str(ROOT / 'tests/test_heading_control.c'), '-lm', '-o', str(heading_math)], check=True)
+    heading_scenarios = ('direction', 'clamp_slew', 'damping', 'invalid', 'gap', 'wrap', 'reset')
+    for scenario in heading_scenarios:
+        subprocess.run([str(heading_math), scenario], check=True)
     line_math = output / 'line_follow_tests.exe'
     subprocess.run([args.gcc, '-std=c99', '-Wall', '-Wextra', '-Werror', '-pedantic',
                     f'-I{ROOT / "Core/Inc"}', str(ROOT / 'Core/Src/line_follow.c'),
@@ -31,11 +39,16 @@ if __name__ == '__main__':
                     '-DCAR_HOST_TEST', '-DCAR_GROUND_TEST', f'-I{ROOT / "tests"}', f'-I{ROOT / "Core/Inc"}',
                     str(ROOT / 'Core/Src/control_math.c'), str(ROOT / 'Core/Src/control.c'),
                     str(ROOT / 'Core/Src/ground_test.c'), str(ROOT / 'tests/test_ground.c'),
+                    str(ROOT / 'Core/Src/heading_control.c'),
                     str(ROOT / 'Core/Src/line_follow.c'),
                     '-lm', '-o', str(ground)], check=True)
     ground_scenarios = ('filter', 'complete', 'wrap', 'boot_held', 'short_press', 'cancel', 'countdown_start',
                         'heartbeat', 'stall', 'direction', 'timing', 'stop', 'coasting')
     for scenario in ground_scenarios:
+        subprocess.run([str(ground), scenario], check=True)
+    ground_extra = ('ramp', 'imu_init_error', 'imu_calibration_error', 'imu_read_error',
+                    'imu_stale', 'imu_nonfinite', 'heading_direction', 'heading_diverge', 'heading_reference', 'heading_scaling')
+    for scenario in ground_extra:
         subprocess.run([str(ground), scenario], check=True)
     line_scenarios = ground_scenarios + ('white_start', 'black_start', 'line_lost', 'line_wide', 'line_stale', 'steering', 'countdown_line_lost', 'noise', 'speed_plan')
     line_count = 0
@@ -65,7 +78,7 @@ if __name__ == '__main__':
                     str(ROOT / 'Core/Src/oled.c'),
                     str(ROOT / 'tests/test_control_engine.c'), '-lm', '-o', str(engine)], check=True)
     engine_scenarios = ('sampling', 'stale', 'timing', 'stop', 'test_zero', 'cycle_wrap', 'invalid_target',
-                        'sign_change', 'invalid_gains', 'fractional_limit',
+                        'sign_change', 'invalid_gains', 'fractional_limit', 'bench_pwm_boundary',
                         'oled_busy', 'oled_race', 'oled_frame', 'oled_error', 'oled_busy_resume', 'oled_init_busy', 'oled_init_retry', 'quiet', 'motor_polarity',
                         'jog_output', 'jog_invalid', 'rpm_feedback', 'rpm_feedback_guard', 'rpm_feedback_slow',
                         'drive_rpm', 'drive_windows', 'drive_invalid', 'drive_unconfigured', 'drive_reconfigure',
@@ -99,6 +112,15 @@ if __name__ == '__main__':
     mpu_scenarios = ('init', 'valid', 'boundary', 'partial', 'missing', 'moving', 'vibration', 'gravity', 'too_short')
     for scenario in mpu_scenarios:
         subprocess.run([str(mpu), scenario], check=True)
-    print(f'{len(SCENARIOS) + len(engine_scenarios) + len(route_scenarios) + len(mpu_scenarios) + len(ground_scenarios) + line_count + len(line_math_scenarios) + 1} C host scenarios passed; hardware timing/IO not exercised.')
+    imu_diag = output / 'imu_diagnostic_tests.exe'
+    subprocess.run([args.gcc, '-std=c99', '-Wall', '-Wextra', '-Werror', '-pedantic',
+                    '-DCAR_HOST_TEST', f'-I{ROOT / "tests"}', f'-I{ROOT / "Core/Inc"}',
+                    str(ROOT / 'Core/Src/imu_diagnostic.c'), str(ROOT / 'tests/test_imu_diagnostic.c'),
+                    '-lm', '-o', str(imu_diag)], check=True)
+    imu_diag_scenarios = ('stationary', 'left_y', 'left_x', 'negative', 'wrap', 'gap',
+                          'read_error', 'nonfinite', 'init_error', 'calibration_error')
+    for scenario in imu_diag_scenarios:
+        subprocess.run([str(imu_diag), scenario], check=True)
+    print(f'{len(SCENARIOS) + len(engine_scenarios) + len(route_scenarios) + len(mpu_scenarios) + len(ground_scenarios) + line_count + len(line_math_scenarios) + len(imu_diag_scenarios) + len(ground_extra) + len(heading_scenarios) + 1} C host scenarios passed; hardware timing/IO not exercised.')
     subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', str(ROOT / 'tests'),
                     '-p', 'test_*.py', '-v'], check=True)

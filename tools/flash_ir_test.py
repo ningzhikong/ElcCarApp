@@ -43,7 +43,7 @@ if not args.verify_only:
         backup = out / 'before_flash.bin'
         if not backup.exists():
             backup.write_bytes(bytes(t.read_memory_block8(0x08000000, 0x10000)))
-    subprocess.run([sys.executable, str(ROOT / '.build/pyocd_local.py'), 'load', '--no-config',
+    subprocess.run([sys.executable, str(ROOT / 'tools/pyocd_local.py'), 'load', '--no-config',
         '--pack', r'D:\Keil\ARM\Pack\Keil\STM32F1xx_DFP\2.2.0', '-t', 'stm32f103c8',
         '-u', '37FF71064E573436189D1843', '-f', '1000000', '-M', 'halt',
         '-O', 'auto_unlock=false', '-O', 'resume_on_disconnect=false',

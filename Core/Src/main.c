@@ -34,6 +34,9 @@
 #include "serial_router.h"
 #include "route_config.h"
 #include <stdio.h>
+#ifdef CAR_IMU_TEST
+#include "imu_diagnostic.h"
+#endif
 #ifdef CAR_GROUND_TEST
 #include "ground_test.h"
 #include "line_follow.h"
@@ -69,6 +72,31 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#ifdef CAR_IMU_TEST
+static void Imu_Test_Run(void)
+{
+  uint32_t display_tick = 0u;
+  Motor_Init(); Control_Stop(); OLED_Init();
+  ImuDiagnostic_Init(&hi2c2);
+  while (1) {
+    ImuDiagnostic_Poll(&hi2c2);
+    if (HAL_GetTick() - display_tick >= 200u) {
+      char text[24];
+      display_tick = HAL_GetTick();
+      OLED_NewFrame();
+      if (imu_diagnostic.state == 2u) snprintf(text, sizeof text, "IMU MOTOR LOCK");
+      else snprintf(text, sizeof text, "IMU FAULT:%lu", (unsigned long)imu_diagnostic.error);
+      OLED_PrintString(0, 0, text, &font16x16, OLED_COLOR_NORMAL);
+      for (unsigned axis = 0; axis < 3u; ++axis) {
+        snprintf(text, sizeof text, "%c:%+.1f DEG", (int)('X' + axis), (double)imu_diagnostic.angle[axis]);
+        OLED_PrintString(0, (uint8_t)(16u * (axis + 1u)), text, &font16x16, OLED_COLOR_NORMAL);
+      }
+      OLED_ShowFrame();
+    }
+    OLED_Poll();
+  }
+}
+#endif
 #ifdef CAR_GROUND_TEST
 static void Ground_Run(void)
 {
@@ -124,6 +152,34 @@ static void Ground_Run(void)
       OLED_PrintString(0, 32, text, &font16x16, OLED_COLOR_NORMAL);
       snprintf(text, sizeof text, "F:%lu Q:%lu", (unsigned long)r.reason, (unsigned long)v.quiet_ticks);
       OLED_PrintString(0, 48, text, &font16x16, OLED_COLOR_NORMAL);
+#ifndef CAR_GROUND_LINE
+      if (r.state == GROUND_READY) {
+        snprintf(text, sizeof text, "HEAD READY X+");
+        OLED_PrintString(0, 32, text, &font16x16, OLED_COLOR_NORMAL);
+      }
+      if (r.state >= GROUND_DONE && ground_motion_stats.ticks) {
+        GroundMotionStats stats;
+        saved = __get_PRIMASK(); __disable_irq();
+        stats = ground_motion_stats; __set_PRIMASK(saved);
+        if (stats.period_us) {
+          float rpm_l = (float)stats.counts_l * 60000000.0f / ((float)CAR_WHEEL_CPR_LEFT * (float)stats.period_us);
+          float rpm_r = (float)stats.counts_r * 60000000.0f / ((float)CAR_WHEEL_CPR_RIGHT * (float)stats.period_us);
+          OLED_NewFrame();
+          if (r.state == GROUND_DONE) {
+            snprintf(text, sizeof text, "DONE H:%+.1f", (double)Ground_HeadingError());
+            OLED_PrintString(0, 0, text, &font16x16, OLED_COLOR_NORMAL);
+          } else OLED_PrintString(0, 0, (char *)labels[r.state <= GROUND_FAULT ? r.state : GROUND_FAULT], &font16x16, OLED_COLOR_NORMAL);
+          snprintf(text, sizeof text, "L:%.1f R:%.1f", (double)rpm_l, (double)rpm_r);
+          OLED_PrintString(0, 16, text, &font16x16, OLED_COLOR_NORMAL);
+          snprintf(text, sizeof text, "PWM:%lu/%lu", (unsigned long)(stats.pwm_sum_l / stats.ticks),
+              (unsigned long)(stats.pwm_sum_r / stats.ticks));
+          OLED_PrintString(0, 32, text, &font16x16, OLED_COLOR_NORMAL);
+          snprintf(text, sizeof text, "C:%lu/%lu F:%lu", (unsigned long)(100u * stats.capped_l / stats.ticks),
+              (unsigned long)(100u * stats.capped_r / stats.ticks), (unsigned long)r.reason);
+          OLED_PrintString(0, 48, text, &font16x16, OLED_COLOR_NORMAL);
+        }
+      }
+#endif
       OLED_ShowFrame();
     }
     OLED_Poll();
@@ -223,6 +279,9 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
+#ifdef CAR_IMU_TEST
+  Imu_Test_Run();
+#endif
 #ifdef CAR_GROUND_TEST
   Ground_Run();
 #endif

@@ -9,12 +9,14 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def build(keil, ir_test=False, ground_test=False, ground_line=False):
+def build(keil, ir_test=False, ground_test=False, ground_line=False, imu_test=False):
     tools = keil / 'ARM/ARMCC/bin'
     if ir_test and (ground_test or ground_line):
         raise ValueError('Select only one diagnostic mode')
+    if imu_test and (ir_test or ground_test or ground_line):
+        raise ValueError('Select only one diagnostic mode')
     ground_test = ground_test or ground_line
-    mode = 'ground_line' if ground_line else 'ground_test' if ground_test else 'ir_test' if ir_test else 'normal'
+    mode = 'imu_test' if imu_test else 'ground_line' if ground_line else 'ground_test' if ground_test else 'ir_test' if ir_test else 'normal'
     output = ROOT / '.build' / ('firmware' if mode == 'normal' else mode)
     output.mkdir(parents=True, exist_ok=True)
     project = ROOT / 'MDK-ARM/ElcCarApp.uvprojx'
@@ -58,6 +60,16 @@ def build(keil, ir_test=False, ground_test=False, ground_line=False):
         ET.SubElement(item, 'FileType').text = '1'
         ET.SubElement(item, 'FilePath').text = '../Core/Src/ground_test.c'
         files.append(item)
+        if not ground_line:
+            item = ET.Element('File')
+            ET.SubElement(item, 'FileType').text = '1'
+            ET.SubElement(item, 'FilePath').text = '../Core/Src/heading_control.c'
+            files.append(item)
+    if imu_test:
+        item = ET.Element('File')
+        ET.SubElement(item, 'FileType').text = '1'
+        ET.SubElement(item, 'FilePath').text = '../Core/Src/imu_diagnostic.c'
+        files.append(item)
     for item in files:
         kind = item.findtext('FileType')
         if kind not in ('1', '2'):
@@ -70,6 +82,7 @@ def build(keil, ir_test=False, ground_test=False, ground_line=False):
                  '--split_sections', '--library_type=microlib', '-D__MICROLIB',
                  '-DSTM32F103xB', '-DUSE_HAL_DRIVER',
                  *(['-DCAR_IR_TEST'] if ir_test else []),
+                 *(['-DCAR_IMU_TEST'] if imu_test else []),
                  *(['-DCAR_GROUND_TEST'] if ground_test else []),
                  *(['-DCAR_GROUND_LINE'] if ground_line else []),
                  f'-DCAR_BUILD_ID="{build_id}"',
@@ -99,7 +112,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--keil', type=Path, default=Path(r'D:\Keil'))
     parser.add_argument('--ir-test', action='store_true', help='Build motor-disabled infrared diagnostic')
+    parser.add_argument('--imu-test', action='store_true', help='Build motor-disabled IMU axis/sign diagnostic')
     parser.add_argument('--ground-test', action='store_true', help='Build standalone local-button ground test')
     parser.add_argument('--ground-line', action='store_true', help='Build bounded 10 RPM line-following test')
     args = parser.parse_args()
-    build(args.keil, args.ir_test, args.ground_test, args.ground_line)
+    build(args.keil, args.ir_test, args.ground_test, args.ground_line, args.imu_test)

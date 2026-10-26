@@ -40,6 +40,8 @@ int main(int argc, char **argv)
     else if (!strcmp(argv[1], "vibration")) vibration = 1;
     else if (!strcmp(argv[1], "gravity")) no_gravity = 1;
     else if (!strcmp(argv[1], "init")) {
+        MPU6050_Data_t mapping = {0.0f, 0.0f, 0.0f, 11.0f, 22.0f, 33.0f};
+        assert(MPU_YAW_AXIS == 0u && MPU_YAW_SIGN == 1 && MPU6050_RawYaw(&mapping) == 11);
         assert(MPU6050_Init(&bus) == 0);
         bad_id = 1; assert(MPU6050_Init(&bus) == 2);
         bad_id = 0; write_error = 1; assert(MPU6050_Init(&bus) == 3);
@@ -47,9 +49,15 @@ int main(int argc, char **argv)
     } else assert(!strcmp(argv[1], "valid") || !strcmp(argv[1], "too_short"));
     uint16_t n = !strcmp(argv[1], "too_short") ? 0 : 20;
     uint8_t result = MPU6050_CalibrateBias(&bus, &x, &y, &z, n);
+    assert(sizeof(MPU6050_CalibrationReport) == 56 && mpu_calibration_report.requested == n);
     if (!strcmp(argv[1], "valid") || !strcmp(argv[1], "boundary")) {
         assert(result == 0 && fabsf(x - 65.0f/65.5f) < .0001f && fabsf(y - 2) < .0001f);
         assert(z < 0);
+        assert(mpu_calibration_report.flags == 0);
     } else assert(result != 0 && x == 99 && y == 99 && z == 99);
+    if (moving) assert(mpu_calibration_report.flags & 8u);
+    if (vibration) assert(mpu_calibration_report.flags & 16u);
+    if (no_gravity) assert(mpu_calibration_report.flags & 4u);
+    if (failures == 3) assert(mpu_calibration_report.flags & 2u);
     printf("mpu_%s: PASS\n", argv[1]); return 0;
 }
