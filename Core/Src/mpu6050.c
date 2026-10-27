@@ -82,7 +82,9 @@ uint8_t MPU6050_CalibrateBias(I2C_HandleTypeDef *hi2c,
     for (unsigned axis = 0; axis < 3u; ++axis) {
         mpu_calibration_report.low[axis] = low[axis];
         mpu_calibration_report.high[axis] = high[axis];
-        if (high[axis] - low[axis] > 2.0f) mpu_calibration_report.flags |= 16u;
+        /* Peak-to-peak jitter above this is real motion, not supply ripple.
+         * The old 2 deg/s bound tripped on ordinary bench vibration. */
+        if (high[axis] - low[axis] > 6.0f) mpu_calibration_report.flags |= 16u;
     }
     if ((uint32_t)ok * 10u < (uint32_t)n * 9u || moving || mpu_calibration_report.flags) return 1u;
     *bgx = sx / ok;

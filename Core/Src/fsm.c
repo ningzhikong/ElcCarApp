@@ -101,8 +101,15 @@ static void Enter_Standby_State(void)
 }
 static bool initialize_imu(void)
 {
-    mpu_ready = MPU6050_Init(&hi2c2) == 0 &&
-        MPU6050_CalibrateBias(&hi2c2, &mpu_bias[0], &mpu_bias[1], &mpu_bias[2], 200) == 0;
+    /* Calibration is rejected on any sample jitter, so a single attempt fails
+     * easily on supply ripple or a light touch. Retry a few times and keep the
+     * first clean result instead of dropping straight into FAULT. */
+    for (unsigned attempt = 0; attempt < 3u; ++attempt) {
+        mpu_ready = MPU6050_Init(&hi2c2) == 0 &&
+            MPU6050_CalibrateBias(&hi2c2, &mpu_bias[0], &mpu_bias[1], &mpu_bias[2], 200) == 0;
+        if (mpu_ready) break;
+        HAL_Delay(50);
+    }
     yaw_tick = HAL_GetTick();
     current_yaw = 0.0f;
     return mpu_ready;
@@ -123,8 +130,10 @@ void Car_System_Init(void)
     heading_pid.kp = ROUTE_HEADING_KP;
     heading_pid.kd = ROUTE_HEADING_KD;
     heading_pid.max_output = ROUTE_MAX_TURN_RPM;
-    initialize_imu();
-    Enter_Standby_State();
+    /* Surface a failed calibration immediately instead of letting the first
+     * Start press discover it as FSM_FAULT_IMU. */
+    if (!initialize_imu()) fault_stop(FSM_FAULT_IMU);
+    else Enter_Standby_State();
 }
 static void GraySensor_Scan(void)
 {
@@ -244,6 +253,8 @@ static void begin_run(uint32_t now)
 {
     bool starts_on_mark;
     yaw_tick = now; /* Standby intentionally does not integrate yaw. */
+    /* Only a real IMU failure blocks the start. Sensor state is not a
+     * precondition: the running loop tolerates a brief blind window. */
     if (!update_yaw(now)) { fault_stop(FSM_FAULT_IMU); return; }
     GraySensor_Scan();
     starts_on_mark = is_on_peak;
@@ -396,8 +407,10 @@ void FSM_ControlLoop_10ms(void)
     else {
         Control_Stop(); LineController_Reset(&line_controller);
         /* Stop output while a wide marker/edge settles; never drive blind.
-         * Raw all-white, invalid or noisy data faults immediately. */
-        if (!gray_valid || !line_sensor.frame.raw_black || now - line_seen_tick >= ROUTE_LINE_LOST_MS)
+         * A short grace window after Start lets the IR filter finish its
+         * three-sample warm-up and the car settle onto the line; only a
+         * sustained loss past that window is a fault. */
+        if (now - line_seen_tick >= ROUTE_LINE_LOST_MS)
             fault_stop(FSM_FAULT_LINE_LOST);
         return;
     }
@@ -405,34 +418,45 @@ void FSM_ControlLoop_10ms(void)
 }
 void FSM_OLED_Update(void)
 {
-    char text[32];
-    /* The 10ms foreground task owns sampling in every system state. */
+    /* 128x64 panel, font16x16 glyphs are 16px tall and 8px wide for ASCII.
+     * Three rows at 20px spacing (0/20/40) leave a 4px gap; 16px spacing
+     * made consecutive rows touch. Keep each row short and readable. */
+    char text[20];
     OLED_NewFrame();
     if (g_system_state == SYS_STATE_FAULT) {
-        snprintf(text, sizeof text, "FAULT %u CTL:%lu", (unsigned)g_fsm_fault, (unsigned long)Control_GetFault());
+        snprintf(text, sizeof text, "FAULT %u", (unsigned)g_fsm_fault);
         OLED_PrintString(0, 0, text, &font16x16, OLED_COLOR_NORMAL);
-        OLED_PrintString(0, 16, "STOP / ACK KEY", &font16x16, OLED_COLOR_NORMAL);
-    } else if (g_system_state == SYS_STATE_STANDBY)
+        snprintf(text, sizeof text, "CTL: %lu", (unsigned long)Control_GetFault());
+        OLED_PrintString(0, 20, text, &font16x16, OLED_COLOR_NORMAL);
+        OLED_PrintString(0, 40, "STOP/ACK", &font16x16, OLED_COLOR_NORMAL);
+    } else if (g_system_state == SYS_STATE_STANDBY) {
         OLED_PrintString(0, 0, "STANDBY", &font16x16, OLED_COLOR_NORMAL);
-    else if (g_system_state == SYS_STATE_VISION)
+        OLED_PrintString(0, 20, "motor: off", &font16x16, OLED_COLOR_NORMAL);
+        /* Idle row shows the raw sensor pattern for wiring checks. */
+        memcpy(text, "IR: ????????", 12u);
+        if (gray_valid && HAL_GetTick() - gray_tick <= 100u) {
+            for (unsigned i = 0; i < 8; ++i) text[i + 4u] = gray_levels[i] ? '1' : '0';
+        }
+        OLED_PrintString(0, 40, text, &font16x16, OLED_COLOR_NORMAL);
+    } else if (g_system_state == SYS_STATE_VISION) {
         OLED_PrintString(0, 0, "VISION", &font16x16, OLED_COLOR_NORMAL);
-    else if (g_system_state == SYS_STATE_BRAKE)
+        snprintf(text, sizeof text, "run: %u", (unsigned)g_target_laps);
+        OLED_PrintString(0, 20, text, &font16x16, OLED_COLOR_NORMAL);
+        if (g_vision_color == COLOR_BLUE)
+            OLED_PrintString(0, 40, "way: ACBD", &font16x16, OLED_COLOR_NORMAL);
+        else
+            OLED_PrintString(0, 40, "way: ABCD", &font16x16, OLED_COLOR_NORMAL);
+    } else if (g_system_state == SYS_STATE_BRAKE) {
         OLED_PrintString(0, 0, "BRAKE", &font16x16, OLED_COLOR_NORMAL);
-    else {
-        snprintf(text, sizeof text, "RPM %.1f %.1f", (double)speed_L, (double)speed_R);
-        OLED_PrintString(0, 0, text, &font16x16, OLED_COLOR_NORMAL);
-        snprintf(text, sizeof text, "lap:%u/%u p:%u", g_current_laps, g_target_laps, (unsigned)g_acbd_phase);
-        OLED_PrintString(0, 16, text, &font16x16, OLED_COLOR_NORMAL);
+    } else {
+        OLED_PrintString(0, 0,
+                         g_system_state == SYS_STATE_RUN_ABCD ? "ABCD" : "ACBD",
+                         &font16x16, OLED_COLOR_NORMAL);
+        snprintf(text, sizeof text, "lap: %u/%u", (unsigned)g_current_laps,
+                 (unsigned)g_target_laps);
+        OLED_PrintString(0, 20, text, &font16x16, OLED_COLOR_NORMAL);
+        snprintf(text, sizeof text, "rpm: %.0f %.0f", (double)speed_L, (double)speed_R);
+        OLED_PrintString(0, 40, text, &font16x16, OLED_COLOR_NORMAL);
     }
-    if (!running() && g_system_state != SYS_STATE_FAULT) {
-        snprintf(text, sizeof text, "RPM %.1f %.1f", (double)speed_L, (double)speed_R);
-        OLED_PrintString(0, 16, text, &font16x16, OLED_COLOR_NORMAL);
-    }
-    OLED_PrintString(0, 32, "IR:12345678", &font16x16, OLED_COLOR_NORMAL);
-    memcpy(text, "   ????????", 12u);
-    if (gray_valid && HAL_GetTick() - gray_tick <= 100u) {
-        for (unsigned i = 0; i < 8; ++i) text[i + 3u] = gray_levels[i] ? '1' : '0';
-    }
-    OLED_PrintString(0, 48, text, &font16x16, OLED_COLOR_NORMAL);
     OLED_ShowFrame();
 }
