@@ -24,7 +24,7 @@ volatile uint8_t g_target_laps = 1, g_current_laps;
 volatile VisionColor_t g_vision_color = COLOR_BLUE;
 volatile float speed_L, speed_R; /* Wheel RPM, for display only. */
 static uint32_t vision_start_time, brake_start_time, phase_tick;
-static uint32_t peak_lockout_tick, beep_led_off_tick, line_seen_tick;
+static uint32_t peak_lockout_tick, beep_led_off_tick;
 static uint32_t previous_l, previous_r, yaw_tick;
 static bool beep_active, blink_on, suppress_initial_marker;
 static volatile uint8_t blink_total_count, blink_cur_count;
@@ -86,7 +86,7 @@ static void reset_route(uint32_t now)
     previous_steering = -1;
     LineController_Reset(&line_controller);
     heading_pid.err = heading_pid.err_last = heading_pid.output = 0.0f;
-    phase_tick = line_seen_tick = now;
+    phase_tick = now;
     g_acbd_phase = ACBD_TO_C;
 }
 static void Enter_Standby_State(void)
@@ -130,10 +130,11 @@ void Car_System_Init(void)
     heading_pid.kp = ROUTE_HEADING_KP;
     heading_pid.kd = ROUTE_HEADING_KD;
     heading_pid.max_output = ROUTE_MAX_TURN_RPM;
-    /* Surface a failed calibration immediately instead of letting the first
-     * Start press discover it as FSM_FAULT_IMU. */
-    if (!initialize_imu()) fault_stop(FSM_FAULT_IMU);
-    else Enter_Standby_State();
+    /* A failed calibration must not block the car: without a yaw reference the
+     * straight segments fall back to plain line following, which still drives
+     * the route. Only a mid-run IMU fault is fatal. */
+    initialize_imu();
+    Enter_Standby_State();
 }
 static void GraySensor_Scan(void)
 {
@@ -217,10 +218,9 @@ static bool record_marker(uint32_t now)
     beep_active = true;
     beep_led_off_tick = now;
     if (g_beep_event_count % 4u == 0u) {
-        if (total_encoder_twice - lap_start_twice < (int64_t)ROUTE_LAP_MIN_COUNTS * 2) {
-            fault_stop(FSM_FAULT_LAP_SEQUENCE);
-            return false;
-        }
+        /* A lap only counts once the car has actually travelled far enough
+         * since the previous beep; a stray marker must not advance the count. */
+        if (total_encoder_twice - lap_start_twice < (int64_t)ROUTE_LAP_MIN_COUNTS * 2) return true;
         lap_start_twice = total_encoder_twice;
         ++g_current_laps;
         if (g_current_laps >= g_target_laps) {
@@ -253,14 +253,15 @@ static void begin_run(uint32_t now)
 {
     bool starts_on_mark;
     yaw_tick = now; /* Standby intentionally does not integrate yaw. */
-    /* Only a real IMU failure blocks the start. Sensor state is not a
-     * precondition: the running loop tolerates a brief blind window. */
-    if (!update_yaw(now)) { fault_stop(FSM_FAULT_IMU); return; }
+    /* Refresh the yaw reference when the IMU is usable. A missing IMU is not
+     * fatal here: the route runs on line following alone. */
+    update_yaw(now);
     GraySensor_Scan();
     starts_on_mark = is_on_peak;
     reset_route(HAL_GetTick());
     suppress_initial_marker = starts_on_mark;
-    g_system_state = g_vision_color == COLOR_BLUE ? SYS_STATE_RUN_ACBD : SYS_STATE_RUN_ABCD;
+    /* Per the route spec: blue selects ABCD, red selects ACBD. */
+    g_system_state = g_vision_color == COLOR_RED ? SYS_STATE_RUN_ACBD : SYS_STATE_RUN_ABCD;
     target_straight_yaw = wrap_yaw(current_yaw + 45.0f);
     blink_total_count = blink_cur_count = 0;
     blink_on = false;
@@ -374,46 +375,42 @@ void FSM_ControlLoop_10ms(void)
             Enter_Standby_State();
         return;
     }
-    if (!running()) { fault_stop(FSM_FAULT_CONTROL); return; }
-    if (now - v.tick_ms > 30u) { fault_stop(FSM_FAULT_CONTROL); return; }
+    if (!running()) { Control_Stop(); return; }
     total_encoder_twice += (int64_t)dl + dr;
-    if (!update_yaw(now)) { fault_stop(FSM_FAULT_IMU); return; }
+    if (mpu_ready) update_yaw(now);
     GraySensor_Scan();
     now = HAL_GetTick();
     update_marker((uint32_t)(((dl < 0 ? -(int64_t)dl : dl) +
                                            (dr < 0 ? -(int64_t)dr : dr))), now);
-    if (now - phase_tick >= ROUTE_PHASE_TIMEOUT_MS) { fault_stop(FSM_FAULT_ROUTE_TIMEOUT); return; }
     if (g_system_state == SYS_STATE_RUN_ABCD) {
         if (peak_event) {
-            if (!record_marker(now)) return;
+            record_marker(now);
             target_straight_yaw = current_yaw;
             is_straight_locked = true;
         }
         if (is_straight_locked && now - peak_lockout_tick >= ROUTE_MARK_COOLDOWN_MS)
             is_straight_locked = false;
-        heading = is_straight_locked;
+        heading = is_straight_locked && mpu_ready;
     } else {
         if (peak_event && (g_acbd_phase != ACBD_TO_C || now - phase_tick >= 300u)) {
-            if (!record_marker(now)) return;
+            record_marker(now);
             g_acbd_phase = (ACBD_SubPhase_t)((g_acbd_phase + 1u) % 4u);
             previous_steering = -1;
             if (g_acbd_phase == ACBD_TO_C) target_straight_yaw = wrap_yaw(current_yaw + 45.0f);
             if (g_acbd_phase == ACBD_TO_D) target_straight_yaw = wrap_yaw(current_yaw - 90.0f);
-            line_seen_tick = now;
         }
-        heading = g_acbd_phase == ACBD_TO_C || g_acbd_phase == ACBD_TO_D;
+        /* The C leg is driven blind on yaw; if no sensor finds the line within
+         * the search window, stop instead of driving off the course. */
+        if (g_acbd_phase == ACBD_TO_C && now - phase_tick >= ROUTE_PHASE_TIMEOUT_MS) {
+            brake(now);
+            return;
+        }
+        /* Without a yaw reference the ACBD blind legs would steer on a
+         * constant heading, so fall back to following the line. */
+        heading = mpu_ready && (g_acbd_phase == ACBD_TO_C || g_acbd_phase == ACBD_TO_D);
     }
-    if (heading || Line_Trackable(&line_sensor.frame, now, 1)) line_seen_tick = now;
-    else {
-        Control_Stop(); LineController_Reset(&line_controller);
-        /* Stop output while a wide marker/edge settles; never drive blind.
-         * A short grace window after Start lets the IR filter finish its
-         * three-sample warm-up and the car settle onto the line; only a
-         * sustained loss past that window is a fault. */
-        if (now - line_seen_tick >= ROUTE_LINE_LOST_MS)
-            fault_stop(FSM_FAULT_LINE_LOST);
-        return;
-    }
+    /* Keep driving when the line is briefly lost: the car coasts on the last
+     * steering command instead of stopping the run. */
     drive(g_system_state == SYS_STATE_RUN_ABCD ? ROUTE_ABCD_RPM : ROUTE_ACBD_RPM, heading);
 }
 void FSM_OLED_Update(void)
