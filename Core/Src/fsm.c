@@ -23,25 +23,19 @@ volatile FSM_Fault_t g_fsm_fault;
 volatile uint8_t g_target_laps = 1, g_current_laps;
 volatile VisionColor_t g_vision_color = COLOR_BLUE;
 volatile float speed_L, speed_R; /* Wheel RPM, for display only. */
+
 static uint32_t vision_start_time, brake_start_time, phase_tick;
 static uint32_t peak_lockout_tick, beep_led_off_tick;
 static uint32_t previous_l, previous_r, yaw_tick;
-static bool beep_active, blink_on, suppress_initial_marker;
+static bool beep_active, blink_on;
 static volatile uint8_t blink_total_count, blink_cur_count;
 static uint8_t g_beep_event_count;
 static int64_t total_encoder_twice, lap_start_twice;
-static uint32_t peak_maintain_pulse;
-static bool is_on_peak, peak_event, peak_locked_out, is_straight_locked;
-static bool marker_collecting, marker_confirmed;
-static uint8_t gray_levels[8];
-static bool gray_valid;
-static uint32_t gray_tick;
+static bool is_on_peak, was_on_peak, is_straight_locked;
 static float current_yaw, target_straight_yaw, mpu_bias[3];
 static bool mpu_ready;
 static Turn_PID_t heading_pid;
 static LineSensor line_sensor;
-static LineController line_controller;
-static int previous_steering = -1;
 static volatile uint8_t uart_rx_idx;
 static char uart_rx_first;
 
@@ -53,110 +47,74 @@ static void Device_Beep_Led_Set(bool on)
 {
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, on ? GPIO_PIN_RESET : GPIO_PIN_SET);
 }
-static void fault_stop(FSM_Fault_t reason)
-{
-    Control_Stop();
-    if (g_fsm_fault == FSM_FAULT_NONE) g_fsm_fault = reason;
-    g_system_state = SYS_STATE_FAULT;
-    Serial_StopVision();
-    Device_Beep_Led_Set(true);
-    beep_active = false;
-}
 static void brake(uint32_t now)
 {
-    Control_Stop(); /* Cancel immediately, including on the operator key. */
+    Control_Stop();
     g_system_state = SYS_STATE_BRAKE;
     brake_start_time = now;
     Device_Beep_Led_Set(false);
     beep_active = false;
 }
-static void reset_route(uint32_t now)
-{
-    ControlView v;
-    Control_Stop();
-    Control_ReadView(&v);
-    previous_l = (uint32_t)v.position_l;
-    previous_r = (uint32_t)v.position_r;
-    total_encoder_twice = lap_start_twice = 0;
-    g_current_laps = g_beep_event_count = 0;
-    peak_maintain_pulse = 0;
-    is_on_peak = peak_event = peak_locked_out = is_straight_locked = false;
-    marker_collecting = marker_confirmed = false;
-    suppress_initial_marker = false;
-    previous_steering = -1;
-    LineController_Reset(&line_controller);
-    heading_pid.err = heading_pid.err_last = heading_pid.output = 0.0f;
-    phase_tick = now;
-    g_acbd_phase = ACBD_TO_C;
-}
 static void Enter_Standby_State(void)
 {
-    reset_route(HAL_GetTick());
+    Control_Stop();
     g_system_state = SYS_STATE_STANDBY;
-    Serial_StopVision();
     Device_Beep_Led_Set(false);
+    Serial_StopVision();
     beep_active = false;
-    blink_total_count = blink_cur_count = 0;
     blink_on = false;
+    g_current_laps = g_beep_event_count = 0;
+    total_encoder_twice = lap_start_twice = 0;
+    is_on_peak = was_on_peak = is_straight_locked = false;
+    heading_pid.err = heading_pid.err_last = heading_pid.output = 0.0f;
+    phase_tick = HAL_GetTick();
 }
 static bool initialize_imu(void)
 {
-    /* Calibration is rejected on any sample jitter, so a single attempt fails
-     * easily on supply ripple or a light touch. Retry a few times and keep the
-     * first clean result instead of dropping straight into FAULT. */
-    for (unsigned attempt = 0; attempt < 3u; ++attempt) {
-        mpu_ready = MPU6050_Init(&hi2c2) == 0 &&
-            MPU6050_CalibrateBias(&hi2c2, &mpu_bias[0], &mpu_bias[1], &mpu_bias[2], 200) == 0;
-        if (mpu_ready) break;
-        HAL_Delay(50);
-    }
+    mpu_ready = MPU6050_Init(&hi2c2) == 0 &&
+        MPU6050_CalibrateBias(&hi2c2, &mpu_bias[0], &mpu_bias[1], &mpu_bias[2], 200) == 0;
     yaw_tick = HAL_GetTick();
     current_yaw = 0.0f;
     return mpu_ready;
 }
 void Car_System_Init(void)
 {
-    GPIO_InitTypeDef input = {0};
+    GPIO_InitTypeDef ir_pin = {0};
     Motor_Init();
     Control_ConfigureDriveRPM();
-    /* GANV PULL jumper must be installed before sensor power-on. One
-     * pull-up on the 4051 common pin biases the selected open-drain output.
-     * ADC initialization earlier in main configured PA2 analog; override it. */
-    input.Pin = GPIO_PIN_2;
-    input.Mode = GPIO_MODE_INPUT;
-    input.Pull = GPIO_PULLUP;
-    HAL_GPIO_Init(GPIOA, &input);
-    LineSensor_Reset(&line_sensor);
     heading_pid.kp = ROUTE_HEADING_KP;
     heading_pid.kd = ROUTE_HEADING_KD;
     heading_pid.max_output = ROUTE_MAX_TURN_RPM;
-    /* A failed calibration must not block the car: without a yaw reference the
-     * straight segments fall back to plain line following, which still drives
-     * the route. Only a mid-run IMU fault is fatal. */
+    /* MX_ADC1_Init leaves PA2 in analog mode, where IDR never updates and every
+     * sensor read returns low. Restore the digital pull-up input the mux output
+     * actually needs; this runs after the ADC setup so it wins. */
+    ir_pin.Pin = GPIO_PIN_2;
+    ir_pin.Mode = GPIO_MODE_INPUT;
+    ir_pin.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(GPIOA, &ir_pin);
+    /* A missing IMU only costs the straight-line heading hold; the route still
+     * runs on line following. */
     initialize_imu();
     Enter_Standby_State();
 }
 static void GraySensor_Scan(void)
 {
     uint8_t raw_levels = 0u;
-    if (line_sensor.filter.seen && HAL_GetTick() - line_sensor.frame.tick_ms < CONTROL_PERIOD_MS) return;
     for (unsigned i = 0; i < 8; ++i) {
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, (i & 1u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, (i & 2u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, (i & 4u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 #ifndef CAR_HOST_TEST
-        /* Allow the weak pull-up and mux wiring to settle (100us/channel).
-         * DWT is started with TIM1 before the first foreground scan. */
+        /* The mux output needs far longer than the 100us a bare 4051 would
+         * imply: the sensor's pull-up and cable capacitance dominate. */
         uint32_t selected_at = DWT->CYCCNT;
-        while ((uint32_t)(DWT->CYCCNT - selected_at) < SystemCoreClock / 10000u) { }
+        while ((uint32_t)(DWT->CYCCNT - selected_at) < SystemCoreClock / 1000u) { }
 #endif
         uint8_t raw = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_2) == GPIO_PIN_SET ? 1u : 0u;
         if (IR_NORMALIZE_LEVEL(raw)) raw_levels |= (uint8_t)(1u << i);
     }
     LineSensor_Update(&line_sensor, raw_levels, HAL_GetTick());
-    for (unsigned i = 0; i < 8; ++i) gray_levels[i] = (line_sensor.frame.levels & (1u << i)) != 0u;
-    gray_valid = line_sensor.frame.valid && !line_sensor.frame.noisy;
-    gray_tick = HAL_GetTick();
+    was_on_peak = is_on_peak;
     is_on_peak = line_sensor.frame.marker;
 }
 static float wrap_yaw(float value)
@@ -165,101 +123,49 @@ static float wrap_yaw(float value)
     while (value < -180.0f) value += 360.0f;
     return value;
 }
-static bool update_yaw(uint32_t now)
+static void update_yaw(uint32_t now)
 {
     MPU6050_Data_t data;
     uint32_t dt = now - yaw_tick;
-    if (!mpu_ready || dt > ROUTE_IMU_MAX_GAP_MS || MPU6050_Read(&hi2c2, &data) != 0) return false;
+    if (!mpu_ready || dt > ROUTE_IMU_MAX_GAP_MS || MPU6050_Read(&hi2c2, &data) != 0) return;
     float raw_yaw = MPU6050_RawYaw(&data);
-    if (!(raw_yaw >= -500.0f && raw_yaw <= 500.0f)) return false;
+    if (!(raw_yaw >= -500.0f && raw_yaw <= 500.0f)) return;
     current_yaw = wrap_yaw(current_yaw + MPU_YAW_SIGN * (raw_yaw - mpu_bias[MPU_YAW_AXIS]) * ((float)dt * 0.001f));
     yaw_tick = now;
-    return true;
 }
-static void update_marker(uint32_t distance, uint32_t now)
-{
-    bool candidate = gray_valid && line_sensor.frame.raw_black >= ROUTE_MARK_MIN_BLACK;
-    peak_event = false;
-    if (!gray_valid) {
-        peak_maintain_pulse = 0;
-        marker_collecting = marker_confirmed = false;
-        return; /* Invalid data cannot be mistaken for a marker's exit. */
-    }
-    if (suppress_initial_marker) {
-        if (!candidate && !is_on_peak) suppress_initial_marker = false;
-        peak_maintain_pulse = 0;
-        marker_collecting = marker_confirmed = false;
-        return;
-    }
-    if (candidate) {
-        if (!marker_collecting) peak_maintain_pulse = 0;
-        marker_collecting = true;
-        if (is_on_peak) marker_confirmed = true;
-        /* Count travel from the raw leading edge, but require a debounced
-         * marker before accepting it; filtering must not discard distance. */
-        if (peak_maintain_pulse < ROUTE_MARK_MIN_COUNTS * 2u)
-            peak_maintain_pulse += distance;
-    } else if (marker_collecting) {
-        if (marker_confirmed && peak_maintain_pulse >= ROUTE_MARK_MIN_COUNTS * 2u &&
-            (!peak_locked_out || now - peak_lockout_tick >= ROUTE_MARK_COOLDOWN_MS)) {
-            peak_event = true;
-            peak_lockout_tick = now;
-            peak_locked_out = true;
-        }
-        peak_maintain_pulse = 0;
-        marker_collecting = marker_confirmed = false;
-    }
-}
-static bool record_marker(uint32_t now)
+/* One beep per marker. Every fourth marker is a lap, but only once the car has
+ * actually travelled far enough since the previous one. */
+static void record_marker(uint32_t now)
 {
     ++g_beep_event_count;
     phase_tick = now;
     Device_Beep_Led_Set(true);
     beep_active = true;
     beep_led_off_tick = now;
-    if (g_beep_event_count % 4u == 0u) {
-        /* A lap only counts once the car has actually travelled far enough
-         * since the previous beep; a stray marker must not advance the count. */
-        if (total_encoder_twice - lap_start_twice < (int64_t)ROUTE_LAP_MIN_COUNTS * 2) return true;
-        lap_start_twice = total_encoder_twice;
-        ++g_current_laps;
-        if (g_current_laps >= g_target_laps) {
-            brake(now);
-            return false;
-        }
-    }
-    return true;
+    if (g_beep_event_count % 4u != 0u) return;
+    if (total_encoder_twice - lap_start_twice < (int64_t)ROUTE_LAP_MIN_COUNTS * 2) return;
+    lap_start_twice = total_encoder_twice;
+    if (++g_current_laps >= g_target_laps) brake(now);
 }
-static void drive(float base, bool heading)
+static void drive(float base)
 {
-    if (previous_steering != (int)heading) {
-        heading_pid.err = heading_pid.err_last = heading_pid.output = 0.0f;
-        LineController_Reset(&line_controller);
-        previous_steering = heading;
-    }
-    if (heading) {
-        float turn = PID_Positional_Calc(&heading_pid, 0.0f, -wrap_yaw(target_straight_yaw - current_yaw));
-        /* Preserve conservative IMU-only route speed; scheduling is line-only. */
-        Control_DriveRPM(ROUTE_LINE_SLOW_RPM, turn);
-    } else if (is_on_peak) {
-        LineController_Reset(&line_controller);
-        Control_DriveRPM(ROUTE_LINE_SLOW_RPM, 0.0f);
-    } else {
-        LineCommand command = LineController_Step(&line_controller, line_sensor.frame.error, HAL_GetTick(), IR_CHANNEL_DIRECTION, base);
-        Control_DriveRPM(command.base_rpm, command.turn_rpm);
-    }
+    float turn = 0.0f;
+    if (is_straight_locked && mpu_ready)
+        turn = PID_Positional_Calc(&heading_pid, 0.0f, -wrap_yaw(target_straight_yaw - current_yaw));
+    else if (!is_on_peak)
+        turn = PID_Positional_Calc(&heading_pid, 0.0f, -line_sensor.frame.error);
+    Control_DriveRPM(base, turn);
 }
 static void begin_run(uint32_t now)
 {
-    bool starts_on_mark;
-    yaw_tick = now; /* Standby intentionally does not integrate yaw. */
-    /* Refresh the yaw reference when the IMU is usable. A missing IMU is not
-     * fatal here: the route runs on line following alone. */
+    yaw_tick = now;
     update_yaw(now);
     GraySensor_Scan();
-    starts_on_mark = is_on_peak;
-    reset_route(HAL_GetTick());
-    suppress_initial_marker = starts_on_mark;
+    total_encoder_twice = lap_start_twice = 0;
+    g_current_laps = g_beep_event_count = 0;
+    phase_tick = now;
+    is_straight_locked = false;
+    g_acbd_phase = ACBD_TO_C;
     /* Per the route spec: blue selects ABCD, red selects ACBD. */
     g_system_state = g_vision_color == COLOR_RED ? SYS_STATE_RUN_ACBD : SYS_STATE_RUN_ABCD;
     target_straight_yaw = wrap_yaw(current_yaw + 45.0f);
@@ -302,54 +208,28 @@ void FSM_KeyScan(void)
     case SYS_STATE_RUN_ACBD:
         brake(now);
         break;
-    case SYS_STATE_FAULT: {
-        ControlView v;
-        Control_ReadView(&v);
-        if (v.quiet_ticks < 30u || now - v.tick_ms > 30u ||
-            v.raw_l != 0 || v.raw_r != 0) break;
-        if (!initialize_imu()) break;
-        GraySensor_Scan();
-        /* Calibration can take a second: verify uninterrupted quiet again. */
-        Control_ReadView(&v);
-        if (v.quiet_ticks < 30u || HAL_GetTick() - v.tick_ms > 30u) break;
+    case SYS_STATE_FAULT:
         Control_ClearFault();
         g_fsm_fault = FSM_FAULT_NONE;
         Enter_Standby_State();
         break;
-    }
     case SYS_STATE_BRAKE:
         break;
     }
 }
-void FSM_VisionRxByte(uint8_t byte)
-{
-    if (g_system_state != SYS_STATE_VISION) return;
-    if (byte >= '1' && byte <= '5') { uart_rx_first = (char)byte; uart_rx_idx = 1; }
-    else if (uart_rx_idx && (byte == 'B' || byte == 'b' || byte == 'R' || byte == 'r')) {
-        g_target_laps = (uint8_t)(uart_rx_first - '0');
-        g_vision_color = (byte == 'B' || byte == 'b') ? COLOR_BLUE : COLOR_RED;
-        blink_total_count = g_target_laps;
-        blink_cur_count = 0;
-        uart_rx_idx = 0;
-    } else uart_rx_idx = 0;
-}
 void FSM_Timer1s_Tick(void)
 {
-    if (g_system_state != SYS_STATE_VISION) return;
-    if (blink_cur_count < blink_total_count) {
-        blink_on = !blink_on;
-        Device_Beep_Led_Set(blink_on);
-        if (!blink_on) ++blink_cur_count;
-    } else Device_Beep_Led_Set(false);
+    if (g_system_state != SYS_STATE_VISION || blink_total_count == 0u) return;
+    if (blink_cur_count >= blink_total_count) { Device_Beep_Led_Set(false); return; }
+    blink_on = !blink_on;
+    Device_Beep_Led_Set(blink_on);
+    if (!blink_on) ++blink_cur_count;
 }
 void FSM_ControlLoop_10ms(void)
 {
     ControlView v;
-    uint32_t now = HAL_GetTick();
     int32_t dl, dr;
-    bool heading;
-    /* Idle also scans at 10ms so a debounced frame exists before Start. */
-    GraySensor_Scan();
+    uint32_t now = HAL_GetTick();
     Control_ReadView(&v);
     speed_L = Wheel_CountsToRPM(v.speed_l, CAR_WHEEL_CPR_LEFT);
     speed_R = Wheel_CountsToRPM(v.speed_r, CAR_WHEEL_CPR_RIGHT);
@@ -357,9 +237,17 @@ void FSM_ControlLoop_10ms(void)
     dr = (int32_t)((uint32_t)v.position_r - previous_r);
     previous_l = (uint32_t)v.position_l;
     previous_r = (uint32_t)v.position_r;
-    if (v.fault) { fault_stop(FSM_FAULT_CONTROL); return; }
+    if (v.fault) {
+        Control_Stop();
+        if (g_fsm_fault == FSM_FAULT_NONE) g_fsm_fault = FSM_FAULT_CONTROL;
+        g_system_state = SYS_STATE_FAULT;
+        Device_Beep_Led_Set(true);
+        beep_active = false;
+        return;
+    }
     if (beep_active && now - beep_led_off_tick >= 80u) {
-        Device_Beep_Led_Set(false); beep_active = false;
+        Device_Beep_Led_Set(false);
+        beep_active = false;
     }
     if (g_system_state == SYS_STATE_FAULT) { Control_Stop(); return; }
     if (g_system_state == SYS_STATE_STANDBY || g_system_state == SYS_STATE_VISION) {
@@ -371,53 +259,54 @@ void FSM_ControlLoop_10ms(void)
     }
     if (g_system_state == SYS_STATE_BRAKE) {
         Control_Stop();
-        if (now - brake_start_time >= 500u || v.quiet_ticks >= 30u)
-            Enter_Standby_State();
+        if (now - brake_start_time >= 500u || v.quiet_ticks >= 30u) Enter_Standby_State();
         return;
     }
     if (!running()) { Control_Stop(); return; }
     total_encoder_twice += (int64_t)dl + dr;
-    if (mpu_ready) update_yaw(now);
+    update_yaw(now);
     GraySensor_Scan();
     now = HAL_GetTick();
-    update_marker((uint32_t)(((dl < 0 ? -(int64_t)dl : dl) +
-                                           (dr < 0 ? -(int64_t)dr : dr))), now);
     if (g_system_state == SYS_STATE_RUN_ABCD) {
-        if (peak_event) {
+        /* A peak edge starts a 500ms IMU heading hold; the beep marks it. */
+        if (is_on_peak != was_on_peak && now - peak_lockout_tick >= ROUTE_MARK_COOLDOWN_MS) {
+            peak_lockout_tick = now;
             record_marker(now);
             target_straight_yaw = current_yaw;
             is_straight_locked = true;
         }
         if (is_straight_locked && now - peak_lockout_tick >= ROUTE_MARK_COOLDOWN_MS)
             is_straight_locked = false;
-        heading = is_straight_locked && mpu_ready;
+        drive(ROUTE_ABCD_RPM);
     } else {
-        if (peak_event && (g_acbd_phase != ACBD_TO_C || now - phase_tick >= 300u)) {
+        /* The C leg is driven blind on yaw until a sensor finds the line. */
+        if (g_acbd_phase == ACBD_TO_C) {
+            if (now - phase_tick >= ROUTE_PHASE_TIMEOUT_MS) { brake(now); return; }
+            if (now - phase_tick > 300u && line_sensor.frame.raw_black) {
+                record_marker(now);
+                g_acbd_phase = ACBD_LINE_TO_B;
+            }
+        } else if (is_on_peak != was_on_peak && now - peak_lockout_tick >= ROUTE_MARK_COOLDOWN_MS) {
+            peak_lockout_tick = now;
             record_marker(now);
             g_acbd_phase = (ACBD_SubPhase_t)((g_acbd_phase + 1u) % 4u);
-            previous_steering = -1;
-            if (g_acbd_phase == ACBD_TO_C) target_straight_yaw = wrap_yaw(current_yaw + 45.0f);
+            /* Each blind leg re-anchors on the heading the car has right now,
+             * so a second lap does not reuse the first lap's target. */
+            if (g_acbd_phase == ACBD_TO_C) {
+                target_straight_yaw = wrap_yaw(current_yaw + 45.0f);
+                phase_tick = now;
+            }
             if (g_acbd_phase == ACBD_TO_D) target_straight_yaw = wrap_yaw(current_yaw - 90.0f);
         }
-        /* The C leg is driven blind on yaw; if no sensor finds the line within
-         * the search window, stop instead of driving off the course. */
-        if (g_acbd_phase == ACBD_TO_C && now - phase_tick >= ROUTE_PHASE_TIMEOUT_MS) {
-            brake(now);
-            return;
-        }
-        /* Without a yaw reference the ACBD blind legs would steer on a
-         * constant heading, so fall back to following the line. */
-        heading = mpu_ready && (g_acbd_phase == ACBD_TO_C || g_acbd_phase == ACBD_TO_D);
+        is_straight_locked = g_acbd_phase == ACBD_TO_C || g_acbd_phase == ACBD_TO_D;
+        drive(ROUTE_ACBD_RPM);
     }
-    /* Keep driving when the line is briefly lost: the car coasts on the last
-     * steering command instead of stopping the run. */
-    drive(g_system_state == SYS_STATE_RUN_ABCD ? ROUTE_ABCD_RPM : ROUTE_ACBD_RPM, heading);
 }
 void FSM_OLED_Update(void)
 {
-    /* 128x64 panel, font16x16 glyphs are 16px tall and 8px wide for ASCII.
-     * Three rows at 20px spacing (0/20/40) leave a 4px gap; 16px spacing
-     * made consecutive rows touch. Keep each row short and readable. */
+    /* 128x64 panel. font16x16 renders ASCII 8px wide and 16px tall, so a row
+     * holds 16 characters. Three rows at 20px spacing (0/20/40) leave a 4px
+     * gap; 16px spacing made consecutive rows touch. */
     char text[20];
     OLED_NewFrame();
     if (g_system_state == SYS_STATE_FAULT) {
@@ -427,33 +316,47 @@ void FSM_OLED_Update(void)
         OLED_PrintString(0, 20, text, &font16x16, OLED_COLOR_NORMAL);
         OLED_PrintString(0, 40, "STOP/ACK", &font16x16, OLED_COLOR_NORMAL);
     } else if (g_system_state == SYS_STATE_STANDBY) {
-        OLED_PrintString(0, 0, "STANDBY", &font16x16, OLED_COLOR_NORMAL);
+        OLED_PrintString(0, 0, "cur: stay", &font16x16, OLED_COLOR_NORMAL);
         OLED_PrintString(0, 20, "motor: off", &font16x16, OLED_COLOR_NORMAL);
-        /* Idle row shows the raw sensor pattern for wiring checks. */
-        memcpy(text, "IR: ????????", 12u);
-        if (gray_valid && HAL_GetTick() - gray_tick <= 100u) {
-            for (unsigned i = 0; i < 8; ++i) text[i + 4u] = gray_levels[i] ? '1' : '0';
-        }
-        OLED_PrintString(0, 40, text, &font16x16, OLED_COLOR_NORMAL);
+        OLED_PrintString(0, 40, "vs: off", &font16x16, OLED_COLOR_NORMAL);
     } else if (g_system_state == SYS_STATE_VISION) {
-        OLED_PrintString(0, 0, "VISION", &font16x16, OLED_COLOR_NORMAL);
+        OLED_PrintString(0, 0, "cur: vs", &font16x16, OLED_COLOR_NORMAL);
         snprintf(text, sizeof text, "run: %u", (unsigned)g_target_laps);
         OLED_PrintString(0, 20, text, &font16x16, OLED_COLOR_NORMAL);
+        /* Blue selects ABCD and red selects ACBD, matching begin_run. */
         if (g_vision_color == COLOR_BLUE)
-            OLED_PrintString(0, 40, "way: ACBD", &font16x16, OLED_COLOR_NORMAL);
+            OLED_PrintString(0, 40, "way:(BLUE)ABCD", &font16x16, OLED_COLOR_NORMAL);
+        else if (g_vision_color == COLOR_RED)
+            OLED_PrintString(0, 40, "way:(RED)ACBD", &font16x16, OLED_COLOR_NORMAL);
         else
-            OLED_PrintString(0, 40, "way: ABCD", &font16x16, OLED_COLOR_NORMAL);
+            OLED_PrintString(0, 40, "nosign", &font16x16, OLED_COLOR_NORMAL);
     } else if (g_system_state == SYS_STATE_BRAKE) {
-        OLED_PrintString(0, 0, "BRAKE", &font16x16, OLED_COLOR_NORMAL);
+        OLED_PrintString(0, 0, "current: stop", &font16x16, OLED_COLOR_NORMAL);
     } else {
         OLED_PrintString(0, 0,
-                         g_system_state == SYS_STATE_RUN_ABCD ? "ABCD" : "ACBD",
+                         g_system_state == SYS_STATE_RUN_ABCD ? "cur: ABCDway" : "cur: ACBDway",
                          &font16x16, OLED_COLOR_NORMAL);
-        snprintf(text, sizeof text, "lap: %u/%u", (unsigned)g_current_laps,
+        snprintf(text, sizeof text, "end: %u/%u", (unsigned)g_current_laps,
                  (unsigned)g_target_laps);
         OLED_PrintString(0, 20, text, &font16x16, OLED_COLOR_NORMAL);
         snprintf(text, sizeof text, "rpm: %.0f %.0f", (double)speed_L, (double)speed_R);
         OLED_PrintString(0, 40, text, &font16x16, OLED_COLOR_NORMAL);
     }
     OLED_ShowFrame();
+}
+void FSM_VisionRxByte(uint8_t byte)
+{
+    if (g_system_state != SYS_STATE_VISION) return;
+    if (uart_rx_idx == 0u) uart_rx_first = (char)byte;
+    if (++uart_rx_idx < 2u) return;
+    uart_rx_idx = 0;
+    if (uart_rx_first < '1' || uart_rx_first > '5') return;
+    char cmd = (char)byte;
+    if (cmd == 'B' || cmd == 'b') g_vision_color = COLOR_BLUE;
+    else if (cmd == 'R' || cmd == 'r') g_vision_color = COLOR_RED;
+    else return;
+    g_target_laps = (uint8_t)(uart_rx_first - '0');
+    blink_total_count = g_target_laps;
+    blink_cur_count = 0;
+    blink_on = false;
 }

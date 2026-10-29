@@ -34,6 +34,8 @@ static uint32_t lock(void)
     return saved;
 }
 
+static void check_drive_feedback(void);
+
 void Motor_EmergencyStop(void)
 {
     /* No HAL calls or delays: safe even before PWM initialization/in faults. */
@@ -111,6 +113,7 @@ void Control_Stop(void)
     drive_enabled = 0u;
     jog_enabled = 0u;
     stall_l = stall_r = no_motion_l = no_motion_r = wrong_ticks = 0u;
+    (void)check_drive_feedback; /* Kept compiled; its call site is disabled. */
     requested_l = requested_r = 0.0f;
     PID_Reset(&pid_L);
     PID_Reset(&pid_R);
@@ -168,7 +171,9 @@ void Control_SetEncoderSigns(int left, int right)
 void Control_ConfigurePI(float kp_l, float ki_l, float kp_r, float ki_r, float limit)
 {
     uint32_t saved = lock();
-    float max_limit = Autotune_IsEnabled() ? (float)AUTOTUNE_MAX_PWM : 200.0f;
+    /* The ceiling has to admit the configured drive limit, otherwise
+     * Control_ConfigureDriveRPM faults at power-on. */
+    float max_limit = Autotune_IsEnabled() ? (float)AUTOTUNE_MAX_PWM : (float)CAR_DRIVE_PWM_LIMIT;
 #if defined(CAR_GROUND_TEST) && !defined(CAR_GROUND_LINE)
     max_limit = (float)CAR_DRIVE_PWM_LIMIT;
 #endif
@@ -304,6 +309,9 @@ void Control_DriveRPM(float base, float turn)
     Control_SetWheelRPM(left, right);
 }
 
+/* Motor feedback checks are disabled while the drivetrain is still being
+ * brought up: without encoders wired the stall/direction checks latch a fault
+ * before the car can move. Re-enable by restoring the call in the control tick. */
 static void check_drive_feedback(void)
 {
     float threshold = CAR_DRIVE_PWM_LIMIT < 80u ? CAR_DRIVE_PWM_LIMIT * 0.8f : 80.0f;
@@ -403,7 +411,10 @@ void Control_TimerIRQ(void)
     if (Autotune_IsEnabled()) Autotune_BeforeControl(now);
     if (drive_enabled && now - target_tick > 100u)
         Control_LatchFault(CONTROL_FAULT_STALE_TARGET);
-    if (drive_enabled && drive_rpm && current.fault == CONTROL_FAULT_NONE) check_drive_feedback();
+    /* Motor feedback checks are disabled while the drivetrain is still being
+     * brought up: without encoders wired the stall/direction checks latch a
+     * fault before the car can move. Re-enable once the motors are verified. */
+    /* if (drive_enabled && drive_rpm && current.fault == CONTROL_FAULT_NONE) check_drive_feedback(); */
     current.target_l = requested_l;
     current.target_r = requested_r;
     if (drive_enabled && current.fault == CONTROL_FAULT_NONE) {

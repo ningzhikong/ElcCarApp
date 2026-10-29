@@ -12,6 +12,9 @@
 #define CAR_DRIVE_PWM_LIMIT 450u
 #else
 #define CAR_DRIVE_MAX_RPM 40.0f
-#define CAR_DRIVE_PWM_LIMIT 150u
+/* Matches the older firmware that drove this chassis: the incremental PI
+ * needs this much headroom to overcome static friction and reach the target
+ * counts. A 150 limit left the wheels stalled. */
+#define CAR_DRIVE_PWM_LIMIT 400u
 #endif
 #endif

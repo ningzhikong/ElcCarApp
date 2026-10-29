@@ -35,5 +35,5 @@
 #define ROUTE_LINE_KD 0.04f
 #define ROUTE_HEADING_KP 4.0f
 #define ROUTE_HEADING_KD 1.5f
-#define ROUTE_MAX_TURN_RPM 4.0f
+#define ROUTE_MAX_TURN_RPM 15.0f
 #endif

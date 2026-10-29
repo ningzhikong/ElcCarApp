@@ -12,3 +12,13 @@ MDK-ARM/ElcCarApp/
 MDK-ARM/DebugConfig/
 MDK-ARM/*.lst
 .workbuddy/
+
+# The old reference project is kept for its sources only: its HAL copy and
+# Keil build tree duplicate what this project already tracks.
+ElcCarApp（old）/Drivers/
+ElcCarApp（old）/MDK-ARM/ElcCarApp/
+ElcCarApp（old）/MDK-ARM/DebugConfig/
+ElcCarApp（old）/MDK-ARM/*.lst
+ElcCarApp（old）/MDK-ARM/*.uvguix.*
+ElcCarApp（old）/MDK-ARM/*.uvoptx
+ElcCarApp（old）/.review_tmp/

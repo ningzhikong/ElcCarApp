@@ -154,7 +154,7 @@ void Ground_Heartbeat(void)
             HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, (i & 4u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 #ifndef CAR_HOST_TEST
             uint32_t selected_at = DWT->CYCCNT;
-            while ((uint32_t)(DWT->CYCCNT - selected_at) < SystemCoreClock / 10000u) { }
+            while ((uint32_t)(DWT->CYCCNT - selected_at) < SystemCoreClock / 1000u) { }
 #endif
             uint8_t raw = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_2) != GPIO_PIN_RESET;
             if (IR_NORMALIZE_LEVEL(raw)) frame.raw_levels |= 1u << i;
