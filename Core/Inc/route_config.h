@@ -12,6 +12,9 @@
 #define IR_NORMALIZE_LEVEL(raw) ((raw) == IR_WHITE_RAW_LEVEL ? 1u : 0u)
 /* Verified physically: channel zero is the leftmost probe in forward view. */
 #define IR_CHANNEL_DIRECTION 1
+/* Physical channels 2..7 only; failed outer probes are never sampled. */
+#define IR_ACTIVE_CHANNEL_MASK 0x7eu
+#define IR_CHANNEL_ENABLED(i) ((IR_ACTIVE_CHANNEL_MASK & (1u << (i))) != 0u)
 #define ROUTE_IR_MAX_AGE_MS 40u
 #define ROUTE_MARK_MIN_BLACK 5u
 #define ROUTE_MARK_MIN_COUNTS 20u

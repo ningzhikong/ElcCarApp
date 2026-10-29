@@ -1,3 +1,4 @@
+#include "route_config.h"
 /* Execute the production route state machine, with HAL devices replaced. */
 #include "fsm.h"
 #include "control.h"
@@ -29,7 +30,7 @@ uint32_t HAL_GetTick(void) { return now; }
 GPIO_PinState HAL_GPIO_ReadPin(void *p, uint16_t pin)
 {
     if (p == GPIOA && pin == GPIO_PIN_2) {
-        assert(pullup_configured); ++ir_reads;
+        assert(pullup_configured && IR_CHANNEL_ENABLED(mux)); ++ir_reads;
         /* Fixture color: white=1. Board output is white high, black low. */
         return gray[mux] ? GPIO_PIN_SET : GPIO_PIN_RESET;
     }
@@ -142,19 +143,19 @@ int main(int argc, char **argv)
     } else if (!strcmp(argv[1], "ir_idle")) {
         for (unsigned i = 0; i < 8; ++i) gray[i] = i % 2;
         for (unsigned i = 0; i < 3; ++i) step(0);
-        FSM_OLED_Update(); assert(!strcmp(ir_pattern, "01010101"));
-        assert(ir_reads == 24 && pullup_configured == 1);
+        FSM_OLED_Update(); assert(!strcmp(ir_pattern, "-101010-"));
+        assert(ir_reads == 18 && pullup_configured == 1);
         assert(base == 0 && g_system_state == SYS_STATE_STANDBY);
         memset(gray, 0, sizeof gray);
         for (unsigned i = 0; i < 3; ++i) step(0);
-        FSM_OLED_Update(); assert(!strcmp(ir_pattern, "00000000"));
+        FSM_OLED_Update(); assert(!strcmp(ir_pattern, "-000000-"));
         white();
         for (unsigned i = 0; i < 3; ++i) step(0);
-        FSM_OLED_Update(); assert(!strcmp(ir_pattern, "11111111"));
+        FSM_OLED_Update(); assert(!strcmp(ir_pattern, "-111111-"));
     } else if (!strcmp(argv[1], "ir_running")) {
         start('R', '1'); step(1);
         unsigned before = ir_reads; FSM_OLED_Update(); /* Must reuse the running control scan. */
-        assert(!strcmp(ir_pattern, "11101111") && g_system_state == SYS_STATE_RUN_ABCD);
+        assert(!strcmp(ir_pattern, "-110111-") && g_system_state == SYS_STATE_RUN_ABCD);
         assert(ir_reads == before);
         now += 101; FSM_OLED_Update(); assert(!strcmp(ir_pattern, "????????"));
     } else if (!strcmp(argv[1], "marker_noise")) {
@@ -162,7 +163,7 @@ int main(int argc, char **argv)
         for (unsigned i = 0; i < 30; ++i) step(10);
         memset(gray, 0, sizeof gray);
         for (unsigned i = 0; i < 5; ++i) step(10);
-        for (unsigned i = 0; i < 6; ++i) { gray[0] = i % 2; step(10); }
+        for (unsigned i = 0; i < 6; ++i) { gray[1] = i % 2; step(10); }
         assert(g_fsm_fault == FSM_FAULT_LINE_LOST && g_system_state == SYS_STATE_FAULT && base == 0);
     } else if (!strcmp(argv[1], "centered_speed")) {
         start('R', '1');
@@ -171,7 +172,7 @@ int main(int argc, char **argv)
         for (unsigned i = 0; i < 400; ++i) step(10);
         assert(base == 15 && fabsf(turn) < .001f && beeps == before && g_current_laps == 0);
         assert(g_system_state == SYS_STATE_RUN_ABCD && g_fsm_fault == FSM_FAULT_NONE);
-        gray[3] = gray[4] = 1; gray[0] = 0;
+        gray[3] = gray[4] = 1; gray[1] = 0;
         for (unsigned i = 0; i < 30; ++i) step(10);
         assert(base == 10 && turn == 4 && g_fsm_fault == FSM_FAULT_NONE);
         white(); step(10);
@@ -232,8 +233,8 @@ int main(int argc, char **argv)
         start('B', '1'); mark(75, 5);
         assert(g_acbd_phase == ACBD_LINE_TO_B);
         for (unsigned i = 0; i < 25; ++i) step(10);
-        white(); gray[0] = 0; for (unsigned i = 0; i < 3; ++i) step(10);
-        float left = turn; gray[0] = 1; gray[7] = 0; for (unsigned i = 0; i < 3; ++i) step(10);
+        white(); gray[1] = 0; for (unsigned i = 0; i < 3; ++i) step(10);
+        float left = turn; gray[1] = 1; gray[6] = 0; for (unsigned i = 0; i < 3; ++i) step(10);
         assert(left > 0 && turn < 0);
     } else if (!strcmp(argv[1], "lost_line")) {
         start('R', '1'); white();

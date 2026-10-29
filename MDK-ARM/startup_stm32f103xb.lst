@@ -46,22 +46,22 @@ ARM Macro Assembler    Page 1
    29 00000000         ;   <o> Stack Size (in Bytes) <0x0-0xFFFFFFFF:8>
    30 00000000         ; </h>
    31 00000000         
-   32 00000000 00000400 
+   32 00000000 00001000 
                        Stack_Size
-                               EQU              0x400
+                               EQU              0x1000
    33 00000000         
    34 00000000                 AREA             STACK, NOINIT, READWRITE, ALIGN
 =3
    35 00000000         Stack_Mem
                                SPACE            Stack_Size
-   36 00000400         __initial_sp
-   37 00000400         
-   38 00000400         
-   39 00000400         ; <h> Heap Configuration
-   40 00000400         ;   <o>  Heap Size (in Bytes) <0x0-0xFFFFFFFF:8>
-   41 00000400         ; </h>
-   42 00000400         
-   43 00000400 00000200 
+   36 00001000         __initial_sp
+   37 00001000         
+   38 00001000         
+   39 00001000         ; <h> Heap Configuration
+   40 00001000         ;   <o>  Heap Size (in Bytes) <0x0-0xFFFFFFFF:8>
+   41 00001000         ; </h>
+   42 00001000         
+   43 00001000 00000200 
                        Heap_Size
 
 
@@ -70,8 +70,8 @@ ARM Macro Assembler    Page 2
 
 
                                EQU              0x200
-   44 00000400         
-   45 00000400                 AREA             HEAP, NOINIT, READWRITE, ALIGN=
+   44 00001000         
+   45 00001000                 AREA             HEAP, NOINIT, READWRITE, ALIGN=
 3
    46 00000000         __heap_base
    47 00000000         Heap_Mem
@@ -468,16 +468,15 @@ ARM Macro Assembler    Page 8
               00000000 
               00000000 
               00000000 
-              00000400 
+              00001000 
               00000200 
               00000000 
 Command Line: --debug --xref --diag_suppress=9931 --cpu=Cortex-M3 --apcs=interw
 ork --depend=elccarapp\startup_stm32f103xb.d -oelccarapp\startup_stm32f103xb.o 
--I.\RTE\_ElcCarApp -ID:\app\keil5\packs\ARM\CMSIS\5.9.0\CMSIS\Core\Include -ID:
-\app\keil5\packs\Keil\STM32F1xx_DFP\2.4.1\Device\Include --predefine="__UVISION
-_VERSION SETA 539" --predefine="_RTE_ SETA 1" --predefine="STM32F10X_MD SETA 1"
- --predefine="_RTE_ SETA 1" --list=startup_stm32f103xb.lst startup_stm32f103xb.
-s
+-I.\RTE\_ElcCarApp -ID:\Keil\ARM\PACK\ARM\CMSIS\5.0.1\CMSIS\Include -ID:\Keil\A
+RM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include --predefine="__UVISION_VERSION 
+SETA 524" --predefine="_RTE_ SETA 1" --predefine="STM32F10X_MD SETA 1" --list=s
+tartup_stm32f103xb.lst startup_stm32f103xb.s
 
 
 
@@ -501,7 +500,7 @@ Symbol: Stack_Mem
       At line 295 in file startup_stm32f103xb.s
       At line 297 in file startup_stm32f103xb.s
 
-__initial_sp 00000400
+__initial_sp 00001000
 
 Symbol: __initial_sp
    Definitions
@@ -1154,7 +1153,7 @@ Symbol: Heap_Size
       At line 47 in file startup_stm32f103xb.s
       At line 296 in file startup_stm32f103xb.s
 
-Stack_Size 00000400
+Stack_Size 00001000
 
 Symbol: Stack_Size
    Definitions

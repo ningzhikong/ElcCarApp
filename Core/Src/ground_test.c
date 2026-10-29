@@ -149,6 +149,7 @@ void Ground_Heartbeat(void)
     if (ground_result.state < GROUND_DONE && (!line_sensor.filter.seen || HAL_GetTick() - ground_ir.tick_ms >= 10u)) {
         GroundIR frame = {0};
         for (unsigned i = 0; i < 8; ++i) {
+            if (!IR_CHANNEL_ENABLED(i)) continue;
             HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, (i & 1u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
             HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, (i & 2u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
             HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, (i & 4u) ? GPIO_PIN_SET : GPIO_PIN_RESET);

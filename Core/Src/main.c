@@ -139,7 +139,7 @@ static void Ground_Run(void)
 #ifdef CAR_GROUND_LINE
       if (r.state == GROUND_READY) {
         memcpy(text, "R:11111111 N:0", 15);
-        for (unsigned i = 0; i < 8; ++i) text[2+i] = (ground_ir.raw_levels & (1u << i)) ? '1' : '0';
+        for (unsigned i = 0; i < 8; ++i) text[2+i] = !IR_CHANNEL_ENABLED(i) ? '-' : (ground_ir.raw_levels & (1u << i)) ? '1' : '0';
         text[13] = ground_ir.noisy ? '1' : '0';
       }
 #endif
@@ -187,25 +187,56 @@ static void Ground_Run(void)
 }
 #endif
 #ifdef CAR_IR_TEST
-/* Standalone digital test: no FSM, IMU, serial commands or control timer. */
+/* Standalone PA2 ADC test: no FSM, IMU, serial commands or control timer. */
 volatile uint8_t ir_test_levels[8];
 volatile uint8_t ir_test_raw[8];
+volatile uint16_t ir_test_adc[8], ir_test_mv[8];
+volatile uint8_t ir_test_valid_mask;
+volatile uint32_t ir_test_adc_errors, ir_test_adc_ready;
+/* Nominal VDDA reference; reported voltage is not a calibrated voltmeter. */
+const uint32_t ir_test_reference_mv = 3300u;
+const uint32_t ir_test_threshold_mv = 1900u;
 volatile uint8_t ir_test_changed;
 volatile uint32_t ir_test_frames, ir_test_select_errors;
+static uint8_t IR_Test_ReadADC(uint16_t *value)
+{
+  if (HAL_ADC_Start(&hadc1) != HAL_OK) {
+    HAL_ADC_Stop(&hadc1);
+    return 0u;
+  }
+  if (HAL_ADC_PollForConversion(&hadc1, 2u) != HAL_OK) {
+    HAL_ADC_Stop(&hadc1);
+    return 0u;
+  }
+  *value = (uint16_t)HAL_ADC_GetValue(&hadc1);
+  return HAL_ADC_Stop(&hadc1) == HAL_OK;
+}
 static void IR_Test_Run(void)
 {
   GPIO_InitTypeDef input = {0};
+  ADC_ChannelConfTypeDef channel = {0};
   char bits[9] = "11111111", text[24];
   uint32_t display_tick = 0;
   uint8_t previous[8] = {0};
   input.Pin = GPIO_PIN_2;
-  input.Mode = GPIO_MODE_INPUT;
-  input.Pull = GPIO_PULLUP;
+  input.Mode = GPIO_MODE_ANALOG;
+  input.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &input);
   Motor_EmergencyStop();
   OLED_Init();
+  channel.Channel = ADC_CHANNEL_2;
+  channel.Rank = ADC_REGULAR_RANK_1;
+  channel.SamplingTime = ADC_SAMPLETIME_239CYCLES_5;
+  ir_test_adc_ready = HAL_ADC_ConfigChannel(&hadc1, &channel) == HAL_OK &&
+                      HAL_ADCEx_Calibration_Start(&hadc1) == HAL_OK;
   while (1) {
     for (unsigned i = 0; i < 8; ++i) {
+      if (!IR_CHANNEL_ENABLED(i)) {
+        ir_test_adc[i] = ir_test_mv[i] = 0xffffu;
+        ir_test_raw[i] = ir_test_levels[i] = 0u;
+        bits[i] = '-';
+        continue;
+      }
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, (i & 1u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
       HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, (i & 2u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
       HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, (i & 4u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
@@ -216,8 +247,22 @@ static void IR_Test_Run(void)
         | (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_12) ? 2u : 0u)
         | (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_11) ? 4u : 0u);
       if (selected != i) ++ir_test_select_errors;
-      ir_test_raw[i] = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_2) ? 1u : 0u;
-      ir_test_levels[i] = IR_NORMALIZE_LEVEL(ir_test_raw[i]);
+      uint16_t counts = 0u;
+      /* Discard the first conversion after switching the analog mux. */
+      if (!ir_test_adc_ready || !IR_Test_ReadADC(&counts) || !IR_Test_ReadADC(&counts)) {
+        ++ir_test_adc_errors;
+        ir_test_valid_mask &= (uint8_t)~(1u << i);
+        ir_test_adc[i] = ir_test_mv[i] = 0xffffu;
+        ir_test_raw[i] = ir_test_levels[i] = 0u;
+        bits[i] = '?';
+        continue;
+      }
+      ir_test_valid_mask |= (uint8_t)(1u << i);
+      ir_test_adc[i] = counts;
+      ir_test_mv[i] = (uint16_t)(((uint32_t)counts * ir_test_reference_mv + 2047u) / 4095u);
+      /* Compare before rounding: strictly greater than the threshold is 1. */
+      ir_test_raw[i] = (uint32_t)counts * ir_test_reference_mv > ir_test_threshold_mv * 4095u;
+      ir_test_levels[i] = ir_test_raw[i];
       bits[i] = ir_test_levels[i] ? '1' : '0';
       if (ir_test_frames && previous[i] != ir_test_levels[i]) ir_test_changed |= (uint8_t)(1u << i);
       previous[i] = ir_test_levels[i];
@@ -227,11 +272,12 @@ static void IR_Test_Run(void)
     if (HAL_GetTick() - display_tick >= 200u) {
       display_tick = HAL_GetTick();
       OLED_NewFrame();
-      OLED_PrintString(0, 0, "IR TEST STOP", &font16x16, OLED_COLOR_NORMAL);
+      OLED_PrintString(0, 0, "ADC 1.9V STOP", &font16x16, OLED_COLOR_NORMAL);
       OLED_PrintString(0, 16, "CH:12345678", &font16x16, OLED_COLOR_NORMAL);
       snprintf(text, sizeof text, "IN:%s", bits);
       OLED_PrintString(0, 32, text, &font16x16, OLED_COLOR_NORMAL);
-      snprintf(text, sizeof text, "T:%02X E:%lu", (unsigned)ir_test_changed, (unsigned long)ir_test_select_errors);
+      snprintf(text, sizeof text, "T:%02X E:%lu", (unsigned)ir_test_changed,
+               (unsigned long)(ir_test_select_errors + ir_test_adc_errors));
       OLED_PrintString(0, 48, text, &font16x16, OLED_COLOR_NORMAL);
       OLED_ShowFrame();
     }

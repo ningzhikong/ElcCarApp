@@ -16,7 +16,18 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "classification")) {
         LineFrame center = Line_Describe(0xe7u, 0xe7u, 1, 0, 10);
         assert(center.black == 2 && center.error == 0 && !center.marker && Line_Trackable(&center, 10, 0));
-        LineFrame mark = Line_Describe(0xe0u, 0xe0u, 1, 0, 10);
+        /* Failed outer probes cannot steer, mark, conceal loss, or add noise. */
+        LineSensor sensor; LineSensor_Reset(&sensor);
+        for (unsigned t = 0; t < 30; ++t) {
+            uint8_t ends = (t & 1u) ? 0x81u : 0u;
+            LineFrame masked = Line_Describe((uint8_t)(0x66u | ends), (uint8_t)(0x66u | ends), 1, 0, t);
+            assert(masked.black == 2 && masked.error == 0 && !masked.marker);
+            LineSensor_Update(&sensor, (uint8_t)(0x66u | ends), t * 10u);
+            if (t >= 2) assert(sensor.frame.valid && !sensor.frame.noisy && sensor.frame.error == 0);
+        }
+        LineFrame ends_only = Line_Describe(0x7eu, 0x7eu, 1, 0, 10);
+        assert(ends_only.black == 0 && !Line_Trackable(&ends_only, 10, 0));
+        LineFrame mark = Line_Describe(0xc1u, 0xc1u, 1, 0, 10);
         assert(mark.marker && Line_Trackable(&mark, 10, 1) && !Line_Trackable(&mark, 10, 0));
         LineFrame white = Line_Describe(0xffu, 0xe7u, 1, 0, 10);
         assert(!Line_Trackable(&white, 10, 0)); /* old stable line cannot conceal raw loss */

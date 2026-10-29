@@ -1,8 +1,8 @@
 elccarapp\oled.o: ..\Core\Src\oled.c
 elccarapp\oled.o: ../Core/Inc/oled.h
 elccarapp\oled.o: ../Core/Inc/font.h
-elccarapp\oled.o: D:\app\keil5\ARM\ARMCC\Bin\..\include\stdint.h
-elccarapp\oled.o: D:\app\keil5\ARM\ARMCC\Bin\..\include\string.h
+elccarapp\oled.o: D:\Keil\ARM\ARMCC\Bin\..\include\stdint.h
+elccarapp\oled.o: D:\Keil\ARM\ARMCC\Bin\..\include\string.h
 elccarapp\oled.o: ../Core/Inc/main.h
 elccarapp\oled.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal.h
 elccarapp\oled.o: ../Core/Inc/stm32f1xx_hal_conf.h
@@ -17,7 +17,7 @@ elccarapp\oled.o: ../Drivers/CMSIS/Include/cmsis_armcc.h
 elccarapp\oled.o: ../Drivers/CMSIS/Device/ST/STM32F1xx/Include/system_stm32f1xx.h
 elccarapp\oled.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal.h
 elccarapp\oled.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy/stm32_hal_legacy.h
-elccarapp\oled.o: D:\app\keil5\ARM\ARMCC\Bin\..\include\stddef.h
+elccarapp\oled.o: D:\Keil\ARM\ARMCC\Bin\..\include\stddef.h
 elccarapp\oled.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_rcc_ex.h
 elccarapp\oled.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_gpio.h
 elccarapp\oled.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_gpio_ex.h
@@ -35,5 +35,5 @@ elccarapp\oled.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h
 elccarapp\oled.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h
 elccarapp\oled.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h
 elccarapp\oled.o: ../Core/Inc/i2c.h
-elccarapp\oled.o: D:\app\keil5\ARM\ARMCC\Bin\..\include\math.h
-elccarapp\oled.o: D:\app\keil5\ARM\ARMCC\Bin\..\include\stdlib.h
+elccarapp\oled.o: D:\Keil\ARM\ARMCC\Bin\..\include\math.h
+elccarapp\oled.o: D:\Keil\ARM\ARMCC\Bin\..\include\stdlib.h

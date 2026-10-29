@@ -131,6 +131,7 @@ static void GraySensor_Scan(void)
     uint8_t raw_levels = 0u;
     if (line_sensor.filter.seen && HAL_GetTick() - line_sensor.frame.tick_ms < CONTROL_PERIOD_MS) return;
     for (unsigned i = 0; i < 8; ++i) {
+        if (!IR_CHANNEL_ENABLED(i)) continue;
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, (i & 1u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, (i & 2u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, (i & 4u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
@@ -429,7 +430,7 @@ void FSM_OLED_Update(void)
     OLED_PrintString(0, 32, "IR:12345678", &font16x16, OLED_COLOR_NORMAL);
     memcpy(text, "   ????????", 12u);
     if (gray_valid && HAL_GetTick() - gray_tick <= 100u) {
-        for (unsigned i = 0; i < 8; ++i) text[i + 3u] = gray_levels[i] ? '1' : '0';
+        for (unsigned i = 0; i < 8; ++i) text[i + 3u] = !IR_CHANNEL_ENABLED(i) ? '-' : gray_levels[i] ? '1' : '0';
     }
     OLED_PrintString(0, 48, text, &font16x16, OLED_COLOR_NORMAL);
     OLED_ShowFrame();

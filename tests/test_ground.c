@@ -210,7 +210,7 @@ int main(int argc, char **argv)
             ControlView v; Control_ReadView(&v);
             assert(fabsf(Wheel_CountsToRPM(v.target_l, CAR_WHEEL_CPR_LEFT) - 15) < .0001f);
             assert(fabsf(Wheel_CountsToRPM(v.target_r, CAR_WHEEL_CPR_RIGHT) - 15) < .0001f);
-            ir_levels = ground_ir_direction == 1 ? 0xfeu : 0x7fu;
+            ir_levels = ground_ir_direction == 1 ? 0xfdu : 0xbfu;
             for (unsigned i = 0; i < 30; ++i) tick(10, 2, 2, 1);
             Control_ReadView(&v);
             assert(fabsf(Wheel_CountsToRPM(v.target_l, CAR_WHEEL_CPR_LEFT) - 6) < .0001f);
@@ -227,12 +227,12 @@ int main(int argc, char **argv)
             assert(ground_result.state == GROUND_FAULT && ground_result.reason == 104);
         } else if (!strcmp(argv[1], "steering")) {
             ControlView v;
-            ir_levels = ground_ir_direction == 1 ? 0xfeu : 0x7fu;
+            ir_levels = ground_ir_direction == 1 ? 0xfdu : 0xbfu;
             for (unsigned i = 0; i < 3; ++i) tick(10, 2, 2, 1);
             Control_ReadView(&v);
             assert(fabsf(v.target_l - Wheel_RPMToCounts(6, CAR_WHEEL_CPR_LEFT)) < .00001f);
             assert(fabsf(v.target_r - Wheel_RPMToCounts(14, CAR_WHEEL_CPR_RIGHT)) < .00001f);
-            ir_levels = ground_ir_direction == 1 ? 0x7fu : 0xfeu;
+            ir_levels = ground_ir_direction == 1 ? 0xbfu : 0xfdu;
             for (unsigned i = 0; i < 3; ++i) tick(10, 2, 2, 1);
             Control_ReadView(&v);
             assert(fabsf(v.target_l - Wheel_RPMToCounts(14, CAR_WHEEL_CPR_LEFT)) < .00001f);

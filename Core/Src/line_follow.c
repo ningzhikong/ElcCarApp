@@ -8,9 +8,12 @@ LineFrame Line_Describe(uint8_t raw, uint8_t levels, unsigned valid, unsigned no
 {
     LineFrame f = {0};
     float weighted = 0.0f;
+    raw |= (uint8_t)~IR_ACTIVE_CHANNEL_MASK;
+    levels |= (uint8_t)~IR_ACTIVE_CHANNEL_MASK;
     f.raw = raw; f.levels = levels; f.tick_ms = now;
     f.valid = valid; f.noisy = noisy;
     for (unsigned i = 0; i < 8; ++i) {
+        if (!IR_CHANNEL_ENABLED(i)) continue;
         if (!(raw & (1u << i))) ++f.raw_black;
         if (!(levels & (1u << i))) { ++f.black; weighted += (float)i - 3.5f; }
     }
@@ -23,6 +26,7 @@ LineFrame Line_Describe(uint8_t raw, uint8_t levels, unsigned valid, unsigned no
 void LineSensor_Reset(LineSensor *s) { memset(s, 0, sizeof *s); }
 void LineSensor_Update(LineSensor *s, uint8_t raw, uint32_t now)
 {
+    raw |= (uint8_t)~IR_ACTIVE_CHANNEL_MASK;
     IRFilter_Step(&s->filter, raw, now);
     s->frame = Line_Describe(raw, s->filter.levels, s->filter.initialized == 0xffu, s->filter.noisy, now);
 }

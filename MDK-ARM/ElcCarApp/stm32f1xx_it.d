@@ -7,14 +7,14 @@ elccarapp\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_def.
 elccarapp\stm32f1xx_it.o: ../Drivers/CMSIS/Device/ST/STM32F1xx/Include/stm32f1xx.h
 elccarapp\stm32f1xx_it.o: ../Drivers/CMSIS/Device/ST/STM32F1xx/Include/stm32f103xb.h
 elccarapp\stm32f1xx_it.o: ../Drivers/CMSIS/Include/core_cm3.h
-elccarapp\stm32f1xx_it.o: D:\app\keil5\ARM\ARMCC\Bin\..\include\stdint.h
+elccarapp\stm32f1xx_it.o: D:\Keil\ARM\ARMCC\Bin\..\include\stdint.h
 elccarapp\stm32f1xx_it.o: ../Drivers/CMSIS/Include/cmsis_version.h
 elccarapp\stm32f1xx_it.o: ../Drivers/CMSIS/Include/cmsis_compiler.h
 elccarapp\stm32f1xx_it.o: ../Drivers/CMSIS/Include/cmsis_armcc.h
 elccarapp\stm32f1xx_it.o: ../Drivers/CMSIS/Device/ST/STM32F1xx/Include/system_stm32f1xx.h
 elccarapp\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal.h
 elccarapp\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy/stm32_hal_legacy.h
-elccarapp\stm32f1xx_it.o: D:\app\keil5\ARM\ARMCC\Bin\..\include\stddef.h
+elccarapp\stm32f1xx_it.o: D:\Keil\ARM\ARMCC\Bin\..\include\stddef.h
 elccarapp\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_rcc_ex.h
 elccarapp\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_gpio.h
 elccarapp\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_gpio_ex.h
@@ -32,3 +32,7 @@ elccarapp\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.
 elccarapp\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h
 elccarapp\stm32f1xx_it.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h
 elccarapp\stm32f1xx_it.o: ../Core/Inc/stm32f1xx_it.h
+elccarapp\stm32f1xx_it.o: ../Core/Src/control.h
+elccarapp\stm32f1xx_it.o: ../Core/Src/../Inc/control.h
+elccarapp\stm32f1xx_it.o: ../Core/Src/../Inc/control_math.h
+elccarapp\stm32f1xx_it.o: ../Core/Src/../Inc/motor_tuning.h

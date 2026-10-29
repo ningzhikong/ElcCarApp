@@ -1,6 +1,7 @@
 elccarapp\control.o: ..\Core\Src\control.c
 elccarapp\control.o: ..\Core\Src\control.h
-elccarapp\control.o: ../Core/Inc/main.h
+elccarapp\control.o: ..\Core\Src\../Inc/control.h
+elccarapp\control.o: ..\Core\Src\../Inc/main.h
 elccarapp\control.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal.h
 elccarapp\control.o: ../Core/Inc/stm32f1xx_hal_conf.h
 elccarapp\control.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_rcc.h
@@ -8,14 +9,14 @@ elccarapp\control.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_def.h
 elccarapp\control.o: ../Drivers/CMSIS/Device/ST/STM32F1xx/Include/stm32f1xx.h
 elccarapp\control.o: ../Drivers/CMSIS/Device/ST/STM32F1xx/Include/stm32f103xb.h
 elccarapp\control.o: ../Drivers/CMSIS/Include/core_cm3.h
-elccarapp\control.o: D:\app\keil5\ARM\ARMCC\Bin\..\include\stdint.h
+elccarapp\control.o: D:\Keil\ARM\ARMCC\Bin\..\include\stdint.h
 elccarapp\control.o: ../Drivers/CMSIS/Include/cmsis_version.h
 elccarapp\control.o: ../Drivers/CMSIS/Include/cmsis_compiler.h
 elccarapp\control.o: ../Drivers/CMSIS/Include/cmsis_armcc.h
 elccarapp\control.o: ../Drivers/CMSIS/Device/ST/STM32F1xx/Include/system_stm32f1xx.h
 elccarapp\control.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal.h
 elccarapp\control.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy/stm32_hal_legacy.h
-elccarapp\control.o: D:\app\keil5\ARM\ARMCC\Bin\..\include\stddef.h
+elccarapp\control.o: D:\Keil\ARM\ARMCC\Bin\..\include\stddef.h
 elccarapp\control.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_rcc_ex.h
 elccarapp\control.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_gpio.h
 elccarapp\control.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_gpio_ex.h
@@ -32,5 +33,10 @@ elccarapp\control.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_pwr.h
 elccarapp\control.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h
 elccarapp\control.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h
 elccarapp\control.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h
+elccarapp\control.o: ..\Core\Src\../Inc/control_math.h
+elccarapp\control.o: ..\Core\Src\../Inc/motor_tuning.h
 elccarapp\control.o: ../Core/Inc/tim.h
-elccarapp\control.o: D:\app\keil5\ARM\ARMCC\Bin\..\include\stdlib.h
+elccarapp\control.o: ../Core/Inc/autotune.h
+elccarapp\control.o: ../Core/Inc/wheel_calibration.h
+elccarapp\control.o: ../Core/Inc/drive_config.h
+elccarapp\control.o: D:\Keil\ARM\ARMCC\Bin\..\include\string.h
